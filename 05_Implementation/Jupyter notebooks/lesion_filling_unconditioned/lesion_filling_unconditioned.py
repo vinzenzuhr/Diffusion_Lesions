@@ -1,10 +1,21 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[121]:
 
 
-# In[101]:
+from torch.utils.tensorboard import SummaryWriter
+tb_summary = SummaryWriter("./Tensorboards/", purge_step=0)
+
+
+# In[122]:
+
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu") 
+
+
+# In[123]:
 
 
 #create config
@@ -35,30 +46,88 @@ class TrainingConfig:
 config = TrainingConfig()
 
 
+# In[124]:
 
 
-# In[109]:
+#log at tensorboard
+tb_summary.add_scalar("image_size", config.image_size, 0)
+tb_summary.add_scalar("train_batch_size", config.train_batch_size, 0)
+tb_summary.add_scalar("eval_batch_size", config.eval_batch_size, 0)
+tb_summary.add_scalar("num_epochs", config.num_epochs, 0)
+tb_summary.add_scalar("learning_rate", config.learning_rate, 0)
+tb_summary.add_scalar("lr_warmup_steps", config.lr_warmup_steps, 0)
+tb_summary.add_scalar("save_image_epochs", config.save_image_epochs, 0)
+tb_summary.add_text("mixed_precision", config.mixed_precision, 0) 
+
+
+# In[125]:
 
 
 #Preprocess with UniRes
+"""
 from unires.struct import settings
 from unires.run import preproc
 import os
+from pathlib import Path
 
 reconstructed_affine_matrices = dict()
 
 os.makedirs(config.uniform_dataset_path, exist_ok=True)
 if (not any(Path(config.uniform_dataset_path).iterdir())):
     data = list(Path(config.dataset_path).rglob("*.nii.gz"))
+    [str(x) for x in data]
     s = settings()
     s.common_output = True  # ensures 'standardised' outputs across subjects
     s.dir_out = config.uniform_dataset_path
-    _, mat, uniform_data_pth = preproc(data, sett=s)
-    reconstructed_affine_matrices[uniform_data_pth] = mat
-    
-    #Show 4 examples
-    _ = [show_image(uniform_data_pth[i], fig_num=i) for i in range(4)]
+    for img in data:
+        _, mat, uniform_data_pth = preproc(img, sett=s)
+        reconstructed_affine_matrices[uniform_data_pth] = mat 
 else:
     print("Skipping preprocessing with UniRes, because output_dir is not empty")
+"""
+
+
+# In[133]:
+
+
+#Preprocess with Nitorch
+import os
+import nitorch as ni
+from nitorch.tools.preproc import atlas_align
+from pathlib import Path
+
+reconstructed_affine_matrices = dict()
+
+os.makedirs(config.uniform_dataset_path, exist_ok=True)
+if (not any(Path(config.uniform_dataset_path).iterdir())):
+    data = list(Path(config.dataset_path).rglob("*.nii.gz"))
+    [str(x) for x in data]
+
+    for img in data[0:10]:
+        nii_mov = ni.io.map(img)
+        dat_mov = nii_mov.fdata(device=device)
+        mat_mov = nii_mov.affine.to(device)
+    
+        dat_mov_atlas, mat, pth, _ = atlas_align([dat_mov, mat_mov], rigid=False, device=device, default_atlas="atlas_t1", write="affine", odir=config.uniform_dataset_path)
+        reconstructed_affine_matrices[pth] = mat
+
+    """
+    dat_mov = list()
+    mat_mov = list()
+    for img in data[0:10]:
+        nii_mov = ni.io.map(img)
+        dat_mov.append(nii_mov.fdata(device=device))
+        mat_mov.append(nii_mov.affine.to(device))
+
+    dat_mov_atlas, mat, paths, _ = atlas_align([list(x) for x in zip(dat_mov, mat_mov)], rigid=False, device=device, default_atlas="atlas_t1", write="affine", odir=config.uniform_dataset_path)
+
+    for i, path in enumerate(paths):
+        reconstructed_affine_matrices[path] = mat[i]
+    """
+else:
+    print("Skipping preprocessing with Nitorch, because output_dir is not empty")
+
+
+# In[96]:
 
 
