@@ -1,3 +1,7 @@
 .ipynb_checkpoints/
+<<<<<<< HEAD
 *.safetensors 
 *.nii.gz
+=======
+*.safetensors 
+>>>>>>> fee702963d754c140fae1e2d8595554d08afcd9e
