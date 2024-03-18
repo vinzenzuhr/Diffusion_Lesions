@@ -12,7 +12,7 @@ class TrainingConfig:
     image_size = 256  # TODO: the generated image resolution
     channels = 1
     train_batch_size = 4 # 16
-    eval_batch_size = 16  # how many images to sample during evaluation
+    eval_batch_size = 4  # how many images to sample during evaluation
     num_epochs = 600
     gradient_accumulation_steps = 1
     learning_rate = 1e-4
@@ -20,9 +20,9 @@ class TrainingConfig:
     save_image_epochs = 30
     save_model_epochs = 300
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
-    output_dir = "lesion-filling-256"  # the model name locally and on the HF Hub
-    dataset_path = "./dataset/imgs"
-    segm_path = "./dataset/segm"
+    output_dir = "lesion-filling-256-repaint"  # the model name locally and on the HF Hub
+    dataset_eval_path = "./dataset_eval/imgs"
+    segm_eval_path = "./dataset_eval/segm"
     pretrained_path = "./pretrained"
     num_gpu=2
     #uniform_dataset_path = "./uniform_dataset"
@@ -53,7 +53,7 @@ import nibabel as nib
 import numpy as np
 from math import floor, ceil
 
-class Dataset_Training(Dataset):
+class DatasetMRI(Dataset):
     """
     Dataset for Training purposes. 
     Adapted implementation of BraTS 2023 Inpainting Challenge (https://github.com/BraTS-inpainting/2023_challenge).
@@ -186,11 +186,11 @@ class Dataset_Training(Dataset):
 
 
 #create dataset
-datasetTrain = Dataset_Training(Path(config.dataset_path), Path(config.segm_path), pad_shape=(256, 256, 256)) # TODO: check shape
+datasetEvaluation = DatasetMRI(Path(config.dataset_eval_path), Path(config.segm_eval_path), pad_shape=(256, 256, 256)) # TODO: check shape 
 
-print(f"Dataset size: {len(datasetTrain)}")
-print(f"\tImage shape: {datasetTrain[0]['gt_image'].shape}")
-print(f"Training Data: {list(datasetTrain[0].keys())}") 
+print(f"Dataset size: {len(datasetEvaluation)}")
+print(f"\tImage shape: {datasetEvaluation[0]['gt_image'].shape}")
+print(f"Evaluation Data: {list(datasetEvaluation[0].keys())}") 
 
 
 # In[5]:
@@ -209,6 +209,7 @@ from diffusers import UNet2DModel
 pipe = DDIMPipeline.from_pretrained(config.pretrained_path)
 model=pipe.unet
 model.to(device)
+print("done")
 
 
 # ### RePaint Inpainting
@@ -216,54 +217,94 @@ model.to(device)
 # In[7]:
 
 
-from diffusers import RePaintPipeline, RePaintScheduler 
+def generate_masks(n, device, generator=None):
+    #create circular mask with random center around the center point of the pictures and a radius between 3 and 50 pixels
+    center=torch.normal(mean=config.image_size/2, std=30, size=(n,2), generator=generator, device=device) # 30 is chosen by inspection
+    low=3   
+    high=50
+    radius=torch.rand(n, generator=generator, device=device)*(high-low)+low # get radius between 3 and 50 from uniform distribution 
 
-rePaint = RePaintPipeline(unet=model, scheduler=RePaintScheduler())
+    #Test case
+    #center=torch.tensor([[0,255],[0,255]]) 
+    #radius=torch.tensor([2,2])
+    
+    Y, X = [torch.arange(config.image_size, device=device)[:,None],torch.arange(config.image_size, device=device)[None,:]] # gives two vectors, each containing the pixel locations. There's a column vector for the column indices and a row vector for the row indices.
+    dist_from_center = torch.sqrt((X.T - center[:,0])[None,:,:]**2 + (Y-center[:,1])[:,None,:]**2) # creates matrix with euclidean distance to center
+    dist_from_center = dist_from_center.permute(2,0,1) 
+
+    #Test case
+    #print(dist_from_center[0,0,0]) #=255
+    #print(dist_from_center[0,0,255]) #=360.624
+    #print(dist_from_center[0,255,0]) #=0
+    #print(dist_from_center[0,255,255]) #=255
+    #print(dist_from_center[0,127,127]) #=180.313 
+    
+    masks = dist_from_center > radius[:,None,None] # creates mask for pixels which are outside the radius. 
+    masks = masks[:,None,:,:].int() 
+    return masks
+
+
+# In[8]:
+
+
+#setup evaluation
+from diffusers import DDIMPipeline
+from diffusers.utils import make_image_grid
+import os
+import matplotlib.pyplot as plt
+from torchvision.transforms.functional import to_pil_image
+
+def evaluate(config, pipeline, eval_dataloader):
+    batch = next(iter(eval_dataloader)) #TODO: Anpassen, falls grösseres evaluation set. Evt. anpassen für accelerate.
+    clean_images = batch["gt_image"]
+
+    generator = torch.cuda.manual_seed(config.seed) if torch.cuda.is_available() else torch.manual_seed(config.seed)
+
+    masks = generate_masks(n=clean_images.shape[0], generator=generator, device=clean_images.device)
+
+    voided_images = clean_images*masks 
+
+    images = pipeline(voided_images, masks, generator=torch.manual_seed(config.seed), jump_length=8).images
+
+    # Make a grid out of the images
+    image_grid = make_image_grid(images, rows=2, cols=2)
+
+    # Save the images
+    test_dir = os.path.join(config.output_dir, "samples")
+    os.makedirs(test_dir, exist_ok=True)
+    image_grid.save(f"{test_dir}/inpainted_image.png")
+    
+    pil_voided_images = [to_pil_image(x) for x in voided_images]
+    voided_image_grid = make_image_grid(pil_voided_images, rows=2, cols=2)
+    voided_image_grid.save(f"{test_dir}/voided_image.png")
+
+    # Save the images 
+    image_grid.save(f"{test_dir}/{prefix}_both_inpainted_image.png") 
+    
+    
+    
+    print("image saved")
 
 
 # In[9]:
 
 
-import matplotlib.pyplot as plt
-img=datasetTrain[1]["gt_image"].squeeze()
-plt.imshow((img+1)/2)
+from diffusers import RePaintPipeline, RePaintScheduler 
+from torch.utils.data import DataLoader
 
-
-# In[10]:
-
-
-mask = torch.zeros_like(img)
-mask[60:110, 110:150]=1
-
-
-# In[11]:
-
-
-plt.imshow((img*mask+1)/2)
-
-
-# In[12]:
-
-
-gen = torch.Generator()
-
-
-# In[13]:
-
-
-img.to(device)
-mask.to(device)
-
-
-# In[14]:
-
-
-inpainted_img = rePaint(img.unsqueeze(0).unsqueeze(0), mask, generator=gen)
+pipeline = RePaintPipeline(unet=model, scheduler=RePaintScheduler())
+eval_dataloader = DataLoader(datasetEvaluation, batch_size=config.eval_batch_size, shuffle=True, num_workers=4)
 
 
 # In[ ]:
 
 
-plt.imshow(inpainted_img.cpu().images.squeeze())
-plt.savefig('inpainted_img.png')
+evaluate(config, pipeline, eval_dataloader)
+
+
+# In[ ]:
+
+
+#create python script for ubelix
+get_ipython().system('jupyter nbconvert --to script "lesion_filling_unconditioned_repaint.ipynb"')
 
