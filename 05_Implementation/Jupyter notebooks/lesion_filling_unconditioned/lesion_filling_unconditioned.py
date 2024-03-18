@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[24]:
 
 
 #create config
@@ -13,16 +13,19 @@ class TrainingConfig:
     channels = 1
     train_batch_size = 4 # 16
     eval_batch_size = 16  # how many images to sample during evaluation
-    num_epochs = 600
+    num_epochs = 100
     gradient_accumulation_steps = 1
     learning_rate = 1e-4
-    lr_warmup_steps = 500
-    save_image_epochs = 30
-    save_model_epochs = 300
+    lr_warmup_steps = 100
+    save_image_epochs = 10
+    save_model_epochs = 80
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
     output_dir = "lesion-filling-256"  # the model name locally and on the HF Hub
-    dataset_path = "./dataset/imgs"
-    segm_path = "./dataset/segm"
+    dataset_train_path = "./dataset_train/imgs"
+    segm_train_path = "./dataset_train/segm"
+    dataset_eval_path = "./dataset_eval/imgs"
+    segm_eval_path = "./dataset_eval/segm"
+    pretrained_path = "./lesion-filling-256/pretrained"
     num_gpu=2
     #uniform_dataset_path = "./uniform_dataset"
 
@@ -37,13 +40,11 @@ config = TrainingConfig()
 # In[2]:
 
 
+#setup huggingface accelerate
 import accelerate
 accelerate.commands.config.default.write_basic_config(config.mixed_precision)
 
-
-# In[3]:
-
-
+#setup tensorboard
 import torch
 from torch.utils.tensorboard import SummaryWriter
 tb_summary = SummaryWriter(config.output_dir, purge_step=0)
@@ -63,76 +64,6 @@ tb_summary.add_scalar("save_image_epochs", config.save_image_epochs, 0)
 tb_summary.add_text("mixed_precision", config.mixed_precision, 0) 
 
 
-# In[5]:
-
-
-#Preprocess with UniRes
-"""
-from unires.struct import settings
-from unires.run import preproc
-import os
-from pathlib import Path
-
-reconstructed_affine_matrices = dict()
-
-os.makedirs(config.uniform_dataset_path, exist_ok=True)
-if (not any(Path(config.uniform_dataset_path).iterdir())):
-    data = list(Path(config.dataset_path).rglob("*.nii.gz"))
-    [str(x) for x in data]
-    s = settings()
-    s.common_output = True  # ensures 'standardised' outputs across subjects
-    s.dir_out = config.uniform_dataset_path
-    for img in data:
-        _, mat, uniform_data_pth = preproc(img, sett=s)
-        reconstructed_affine_matrices[uniform_data_pth] = mat 
-else:
-    print("Skipping preprocessing with UniRes, because output_dir is not empty")
-"""
-
-
-# In[6]:
-
-
-#Preprocess with Nitorch
-""" 
-import os
-import nitorch as ni
-from nitorch.tools.preproc import atlas_align
-from pathlib import Path
-
-reconstructed_affine_matrices = dict()
-
-os.makedirs(config.uniform_dataset_path, exist_ok=True)
-if (not any(Path(config.uniform_dataset_path).iterdir())):
-    data = list(Path(config.dataset_path).rglob("*.nii.gz"))
-    [str(x) for x in data]
-
-    for img in data[0:10]:
-        nii_mov = ni.io.map(img)
-        dat_mov = nii_mov.fdata(device=device)
-        mat_mov = nii_mov.affine.to(device)
-    
-        dat_mov_atlas, mat, pth, _ = atlas_align([dat_mov, mat_mov], rigid=False, device=device, default_atlas="atlas_t1", write="affine", odir=config.uniform_dataset_path)
-        reconstructed_affine_matrices[pth] = mat
-
-    #
-    #dat_mov = list()
-    #mat_mov = list()
-    #for img in data[0:10]:
-    #    nii_mov = ni.io.map(img)
-    #    dat_mov.append(nii_mov.fdata(device=device))
-    #    mat_mov.append(nii_mov.affine.to(device))
-
-    #dat_mov_atlas, mat, paths, _ = atlas_align([list(x) for x in zip(dat_mov, mat_mov)], rigid=False, device=device, default_atlas="atlas_t1", write="affine", odir=config.uniform_dataset_path)
-
-    #for i, path in enumerate(paths):
-    #    reconstructed_affine_matrices[path] = mat[i]
-    
-else:
-    print("Skipping preprocessing with Nitorch, because output_dir is not empty")
-"""
-
-
 # In[7]:
 
 
@@ -144,16 +75,16 @@ import nibabel as nib
 import numpy as np
 from math import floor, ceil
 
-class Dataset_Training(Dataset):
+class DatasetMRI(Dataset):
     """
     Dataset for Training purposes. 
     Adapted implementation of BraTS 2023 Inpainting Challenge (https://github.com/BraTS-inpainting/2023_challenge).
     
     Contains ground truth t1n images (gt) 
     Args:
-        root_dir: Path to dataset files
+        root_dir_img: Path to img files
+        root_dir_segm: Path to segmentation maps
         pad_shape: Shape the images will be transformed to
-        transversal_range: Range of transversal 2D slices which should be considered for training
 
     Raises:
         UserWarning: When your input images are not (256, 256, 160)
@@ -165,34 +96,37 @@ class Dataset_Training(Dataset):
             "max_v": Maximal value of t1 image (used for normalization) 
     """
 
-    def __init__(self, root_dir_img: Path, root_dir_segm: Path, pad_shape=(256,256,256)): # TODO: better word for transversal_range? #Todo: document root dirs, 
+    def __init__(self, root_dir_img: Path, root_dir_segm: Path, pad_shape=(256,256,256)):
         #Initialize variables
         self.root_dir_img = root_dir_img
         self.root_dir_segm = root_dir_segm
         self.pad_shape = pad_shape 
+        self.list_paths_t1n = list(root_dir_img.rglob("*.nii.gz"))
+        self.list_paths_segm = list(root_dir_segm.rglob("*.nii.gz"))
+        #define offsets between first and last segmented slices and the slices to be used for training
         bottom_offset=60 
         top_offset=20
 
-        # Ground truth specific paths
-        self.list_paths_t1n = list(root_dir_img.rglob("*.nii.gz"))
-        self.list_paths_segm = list(root_dir_segm.rglob("*.nii.gz"))
-
+        #go through all 3D imgs
         idx=0
         self.idx_to_2D_slice = dict()
         for j, path in enumerate(self.list_paths_segm):
             t1n_segm = nib.load(path)
             t1n_3d = t1n_segm.get_fdata()
- 
+
+            #get first slice with segmented content and add offset
             i=0
             while(not t1n_3d[:,i,:].any()):
                 i+=1
             bottom=i+bottom_offset
-            
+
+            #get last slice with segmented content and add offset
             i=t1n_3d.shape[1]-1
             while(not t1n_3d[:,i,:].any()):
                 i-=1
             top=i-top_offset
 
+            #Add all slices between desired top and bottom slice to dataset
             for i in np.arange(top-bottom):
                 self.idx_to_2D_slice[idx]=(self.list_paths_t1n[j],bottom+i)
                 idx+=1 
@@ -252,7 +186,7 @@ class Dataset_Training(Dataset):
     def __getitem__(self, idx):
         t1n_path = self.idx_to_2D_slice[idx][0]
         slice_idx = self.idx_to_2D_slice[idx][1]
-        t1n_img = nib.load(t1n_path) # around 0.6s on local machine
+        t1n_img = nib.load(t1n_path)
         t1n = t1n_img.get_fdata()
         
         # preprocess data
@@ -260,9 +194,6 @@ class Dataset_Training(Dataset):
         
         # get 2D slice from 3D
         t1n_slice = t1n[:,slice_idx,:] 
-        
-        #t1n_slice = t1n[:128,slice_idx,:128] 
-
         
         # Output data
         sample_dict = {
@@ -277,18 +208,11 @@ class Dataset_Training(Dataset):
 
 
 #create dataset
-datasetTrain = Dataset_Training(Path(config.dataset_path), Path(config.segm_path), pad_shape=(256, 256, 256)) # TODO: check shape
+datasetTrain = DatasetMRI(Path(config.dataset_train_path), Path(config.segm_train_path), pad_shape=(256, 256, 256))
 
 print(f"Dataset size: {len(datasetTrain)}")
 print(f"\tImage shape: {datasetTrain[0]['gt_image'].shape}")
 print(f"Training Data: {list(datasetTrain[0].keys())}") 
-
-
-# In[9]:
-
-
-list_paths_t1n = list(Path(config.dataset_path).rglob("*.nii.gz"))
-list_paths_segm = list(Path(config.segm_path).rglob("*.nii.gz"))
 
 
 # In[10]:
@@ -313,6 +237,7 @@ fig.show()
 
 from torch.utils.data import DataLoader
 
+# create dataloader function, which is executed inside the training loop (necessary because of huggingface accelerate)
 def get_dataloader():
     return DataLoader(datasetTrain, batch_size=config.train_batch_size, shuffle=True, num_workers=4)
 
@@ -346,7 +271,6 @@ model = UNet2DModel(
         "UpBlock2D",
     ),
 )
-
 
 tb_summary.add_text("model", "UNet2DModel", 0) 
 
@@ -408,8 +332,7 @@ import os
 
 def evaluate(config, epoch, pipeline):
     # Sample some images from random noise (this is the backward diffusion process).
-    # The default pipeline output type is `List[PIL.Image]`
-    model.eval()
+    # The default pipeline output type is `List[PIL.Image]` 
     images = pipeline(
         batch_size=config.eval_batch_size,
         generator=torch.manual_seed(config.seed),
@@ -441,7 +364,7 @@ import sys
 import time
 
 def train_loop(config, model, noise_scheduler, optimizer, lr_scheduler):
-    
+    # setup training environment
     accelerator = Accelerator(
         mixed_precision=config.mixed_precision,
         gradient_accumulation_steps=config.gradient_accumulation_steps, 
@@ -463,10 +386,8 @@ def train_loop(config, model, noise_scheduler, optimizer, lr_scheduler):
     os.makedirs(config.output_dir, exist_ok=True)  
 
     global_step = 0
-
     
-    
-    # Now you train the model
+    # Train model
     model.train()
     for epoch in range(config.num_epochs): 
         progress_bar = tqdm(total=len(train_dataloader), disable=not accelerator.is_local_main_process) 
@@ -487,8 +408,7 @@ def train_loop(config, model, noise_scheduler, optimizer, lr_scheduler):
                 dtype=torch.int64
             )
 
-            # Add noise to the clean images according to the noise magnitude at each timestep
-            # (this is the forward diffusion process)
+            # Add noise to the clean images according to the noise magnitude at each timestep (forward diffusion process)
             noisy_images = noise_scheduler.add_noise(clean_images, noise, timesteps)
 
             with accelerator.accumulate(model):
@@ -496,9 +416,7 @@ def train_loop(config, model, noise_scheduler, optimizer, lr_scheduler):
                 noise_pred = model(noisy_images, timesteps, return_dict=False)[0]
                 loss = F.mse_loss(noise_pred, noise)
                 accelerator.backward(loss)
-                #loss.backward()
                 accelerator.clip_grad_norm_(model.parameters(), 1.0)
-                #nn.utils.clip_grad_value_(model.parameters(),1.0)
     
                 #log gradient norm 
                 parameters = [p for p in model.parameters() if p.grad is not None and p.requires_grad]
@@ -506,12 +424,15 @@ def train_loop(config, model, noise_scheduler, optimizer, lr_scheduler):
                     total_norm = 0.0
                 else: 
                     total_norm = torch.norm(torch.stack([torch.norm(p.grad.detach()).cpu() for p in parameters]), 2.0).item()
-                
+
+                #do learning step
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
             progress_bar.update(1)
+
+            # save logs
             if accelerator.is_main_process:
                 logs = {"loss": loss.cpu().detach().item(), "lr": lr_scheduler.get_last_lr()[0], "total_norm": total_norm, "step": global_step}
                 tb_summary.add_scalar("loss", logs["loss"], global_step)
@@ -519,19 +440,20 @@ def train_loop(config, model, noise_scheduler, optimizer, lr_scheduler):
                 tb_summary.add_scalar("total_norm", logs["total_norm"], global_step) 
             
                 progress_bar.set_postfix(**logs)
-            #accelerator.log(logs, step=global_step)
+                #accelerator.log(logs, step=global_step)
             global_step += 1 
 
-        # After each epoch you optionally sample some demo images with evaluate() and save the model
+        # After a certain number of epochs it samples some images with evaluate() and save the model
         if accelerator.is_main_process:
+            model.eval()
             pipeline = DDIMPipeline(unet=accelerator.unwrap_model(model), scheduler=noise_scheduler) 
     
             if (epoch) % config.save_image_epochs == 0 or epoch == config.num_epochs - 1:
                 evaluate(config, epoch, pipeline)
     
             if (epoch) % config.save_model_epochs == 0 or epoch == config.num_epochs - 1: 
-                pipeline.save_pretrained(config.output_dir)
-
+                pipeline.save_pretrained(config.pretrained_path)
+                model.save_pretrained(config.pretrained_path)
 
 tb_summary.add_text("inference_pipeline", "DDIMPipeline", 0) 
 
@@ -541,17 +463,16 @@ tb_summary.add_text("inference_pipeline", "DDIMPipeline", 0)
 
 from accelerate import notebook_launcher
 
-# If run from a jupyter notebook then uncomment the two lines and comment the last line
+# If run from a jupyter notebook then uncomment the two lines and remove last line
 #args = (config, model, noise_scheduler, optimizer, lr_scheduler)
 #notebook_launcher(train_loop, args, num_processes=config.num_gpu)    
 
 train_loop(config, model, noise_scheduler, optimizer, lr_scheduler)
 
 
-# In[20]:
+# In[23]:
 
 
 #create python script for ubelix
 get_ipython().system('jupyter nbconvert --to script "lesion_filling_unconditioned.ipynb"')
-#adjust batch size
 
