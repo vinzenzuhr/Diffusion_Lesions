@@ -1,3 +1,4 @@
 .ipynb_checkpoints/
 *.safetensors 
 *.nii.gz
+05_Implementation/Jupyter notebooks/lesion_filling_conditioned_circles/segmentation_models
