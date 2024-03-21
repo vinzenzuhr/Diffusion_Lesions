@@ -11,8 +11,8 @@ from dataclasses import dataclass
 class TrainingConfig:
     image_size = 256  # TODO: the generated image resolution
     channels = 1
-    train_batch_size = 4 # 16
-    eval_batch_size = 4  # how many images to sample during evaluation
+    train_batch_size = 2 # 16
+    eval_batch_size = 2  # 2 x 2 GPU = 4 
     num_epochs = 600
     gradient_accumulation_steps = 1
     learning_rate = 1e-4
@@ -38,14 +38,8 @@ config = TrainingConfig()
 # In[2]:
 
 
-#setup tensorboard
-import torch 
-
-
-# In[3]:
-
-
 # create dataset
+import torch 
 from torch.utils.data import Dataset
 from torch.nn import functional as F
 from pathlib import Path
@@ -182,7 +176,7 @@ class DatasetMRI(Dataset):
         return sample_dict 
 
 
-# In[4]:
+# In[3]:
 
 
 #create dataset
@@ -193,13 +187,17 @@ print(f"\tImage shape: {datasetEvaluation[0]['gt_image'].shape}")
 print(f"Evaluation Data: {list(datasetEvaluation[0].keys())}") 
 
 
+# In[4]:
+
+
+from torch.utils.data import DataLoader
+
+# create dataloader function, which is executed inside the training loop (necessary because of huggingface accelerate)
+def get_dataloader(dataset, batch_size, shuffle):
+    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=4)
+
+
 # In[5]:
-
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-# In[6]:
 
 
 # load model
@@ -208,13 +206,12 @@ from diffusers import UNet2DModel
 
 pipe = DDIMPipeline.from_pretrained(config.pretrained_path)
 model=pipe.unet
-model.to(device)
 print("done")
 
 
 # ### RePaint Inpainting
 
-# In[7]:
+# In[6]:
 
 
 def generate_masks(n, device, generator=None):
@@ -244,7 +241,7 @@ def generate_masks(n, device, generator=None):
     return masks
 
 
-# In[8]:
+# In[7]:
 
 
 #setup evaluation
@@ -254,57 +251,66 @@ import os
 import matplotlib.pyplot as plt
 from torchvision.transforms.functional import to_pil_image
 
-def evaluate(config, pipeline, eval_dataloader):
+def evaluate(config, pipeline, eval_dataloader, accelerator):
     batch = next(iter(eval_dataloader)) #TODO: Anpassen, falls grösseres evaluation set. Evt. anpassen für accelerate.
     clean_images = batch["gt_image"]
-
+    
     generator = torch.cuda.manual_seed(config.seed) if torch.cuda.is_available() else torch.manual_seed(config.seed)
-
     masks = generate_masks(n=clean_images.shape[0], generator=generator, device=clean_images.device)
-
     voided_images = clean_images*masks 
 
-    images = pipeline(voided_images, masks, generator=torch.manual_seed(config.seed), jump_length=8).images
-
-    # Make a grid out of the images
-    image_grid = make_image_grid(images, rows=2, cols=2)
-
-    # Save the images
-    test_dir = os.path.join(config.output_dir, "samples")
-    os.makedirs(test_dir, exist_ok=True)
-    image_grid.save(f"{test_dir}/inpainted_image.png")
+    images = pipeline(voided_images, masks, generator=torch.manual_seed(config.seed), output_type=np.array, jump_length=8).images
+    images = (torch.from_numpy(images)).to(clean_images.device) 
     
-    pil_voided_images = [to_pil_image(x) for x in voided_images]
-    voided_image_grid = make_image_grid(pil_voided_images, rows=2, cols=2)
-    voided_image_grid.save(f"{test_dir}/voided_image.png")
 
-    # Save the images 
-    image_grid.save(f"{test_dir}/{prefix}_both_inpainted_image.png") 
-    
-    
-    
-    print("image saved")
+    #collect all images from the different processes/GPUs
+    clean_images  = accelerator.gather(clean_images)
+    images = accelerator.gather(images)
+    voided_images = accelerator.gather(voided_images)
+
+    if accelerator.is_main_process: 
+
+        test_dir = os.path.join(config.output_dir, "samples")
+        os.makedirs(test_dir, exist_ok=True) 
+
+        
+        pil_images = [to_pil_image(x) for x in images]
+        image_grid = make_image_grid(pil_images, rows=2, cols=2)
+        image_grid.save(f"{test_dir}/inpainted_image.png")
+        
+        pil_voided_images = [to_pil_image(x) for x in voided_images]
+        voided_image_grid = make_image_grid(pil_voided_images, rows=2, cols=2)
+        voided_image_grid.save(f"{test_dir}/voided_image.png")    
+
+        pil_clean_images = [to_pil_image(x) for x in clean_images]
+        clean_image_grid = make_image_grid(pil_clean_images, rows=2, cols=2)
+        clean_image_grid.save(f"{test_dir}/clean_image.png")   
+        
+        print("image saved")
 
 
-# In[9]:
+# In[10]:
 
 
-from diffusers import RePaintPipeline, RePaintScheduler 
-from torch.utils.data import DataLoader
+from diffusers import RePaintPipeline, RePaintScheduler  
+from accelerate import Accelerator, PartialState
 
+accelerator = Accelerator()
+distributed_state = PartialState()
+
+eval_dataloader = get_dataloader(datasetEvaluation, config.eval_batch_size, shuffle=False)
+model.eval()
 pipeline = RePaintPipeline(unet=model, scheduler=RePaintScheduler())
-eval_dataloader = DataLoader(datasetEvaluation, batch_size=config.eval_batch_size, shuffle=True, num_workers=4)
+pipeline.to(distributed_state.device) 
+
+pipeline, eval_dataloader = accelerator.prepare(
+        pipeline, eval_dataloader
+    )
+
+evaluate(config, pipeline, eval_dataloader, accelerator)
+    
+    
+    
 
 
-# In[ ]:
-
-
-evaluate(config, pipeline, eval_dataloader)
-
-
-# In[ ]:
-
-
-#create python script for ubelix
-get_ipython().system('jupyter nbconvert --to script "lesion_filling_unconditioned_repaint.ipynb"')
-
+# In[14]:
