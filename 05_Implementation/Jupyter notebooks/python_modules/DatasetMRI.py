@@ -31,7 +31,7 @@ class DatasetMRI(Dataset):
             
     """
 
-    def __init__(self, root_dir_img: Path, root_dir_masks: Path = None, pad_shape: Tuple = (256,256,256), directDL: bool = False, seed: int = None):
+    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, pad_shape: Tuple = (256,256,256), directDL: bool = True, seed: int = None):
         #Initialize variables
         self.root_dir_img = root_dir_img 
         self.pad_shape = pad_shape
@@ -41,14 +41,20 @@ class DatasetMRI(Dataset):
             self.list_paths_masks = []
             folder_list = list(root_dir_masks.glob("*")) 
             for folder in folder_list: 
-                self.list_paths_masks.append(list(folder.rglob("*.nii.gz"))) 
+                self.list_paths_masks.append(list(folder.rglob("*.nii.gz")))
         else:
             self.list_paths_masks = None
+        if(root_dir_segm):
+            self.list_paths_segm = list(root_dir_segm.rglob("*.nii.gz"))
+        else:
+            self.list_paths_segm = None 
         self.list_paths_t1n = list(root_dir_img.rglob("*.nii.gz"))
         self.idx_to_element = dict()
         self.reference_shape = (256,256,160)
         self.seed = seed 
 
+        if(root_dir_segm and (len(self.list_paths_t1n) != len(self.list_paths_segm))):
+            raise ValueError(f"The amount of T1n files and segm files must be the same. Got {len(self.list_paths_t1n)} and {len(self.list_paths_segm)}")        
         if(root_dir_masks and (len(self.list_paths_t1n)!= len(self.list_paths_masks))):
             raise ValueError(f"The amount of T1n files and mask folders must be the same. Got {len(self.list_paths_t1n)} and {len(self.list_paths_masks)}")
 
@@ -58,7 +64,21 @@ class DatasetMRI(Dataset):
     def __getitem__(self, idx):
         pass
 
-    def padding(self, t1n: torch.tensor):
+        
+    def _get_white_matter_segm(self, segm_path: str):
+        t1n_segm = nib.load(segm_path)
+        t1n_segm = t1n_segm.get_fdata()
+
+        #transform segmentation if the segmentation came from Direct+DL
+        if self.directDL:
+            t1n_segm = np.transpose(t1n_segm)
+            t1n_segm = np.flip(t1n_segm, axis=1)
+        
+        binary_white_matter_segm = np.logical_or(t1n_segm==41, t1n_segm==2)
+
+        return binary_white_matter_segm
+
+    def _padding(self, t1n: torch.tensor):
         """
         Pads the images to the pad_shape. 
 
@@ -153,7 +173,7 @@ class DatasetMRI(Dataset):
 
         #pad the image to pad_shape
         t1n = torch.Tensor(t1n)
-        t1n = self.padding(t1n)
+        t1n = self._padding(t1n)
 
         #map images from [0,1] to [-1,1]
         t1n = (t1n*2) - 1
