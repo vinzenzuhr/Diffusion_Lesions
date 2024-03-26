@@ -7,6 +7,7 @@ from torch.utils.data import Dataset
 from torch.nn import functional as F
 from typing import Tuple
 import os
+from scipy.ndimage import label
 
 class DatasetMRI(Dataset):
     """
@@ -31,7 +32,7 @@ class DatasetMRI(Dataset):
             
     """
 
-    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, pad_shape: Tuple = (256,256,256), directDL: bool = True, seed: int = None):
+    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, pad_shape: Tuple = (256,256,256), directDL: bool = True, seed: int = None, only_connected_masks: bool = False):
         #Initialize variables
         self.root_dir_img = root_dir_img 
         self.pad_shape = pad_shape
@@ -51,7 +52,8 @@ class DatasetMRI(Dataset):
         self.list_paths_t1n = list(root_dir_img.rglob("*.nii.gz"))
         self.idx_to_element = dict()
         self.reference_shape = (256,256,160)
-        self.seed = seed 
+        self.seed = seed  
+        self.only_connected_masks = only_connected_masks
 
         if(root_dir_segm and (len(self.list_paths_t1n) != len(self.list_paths_segm))):
             raise ValueError(f"The amount of T1n files and segm files must be the same. Got {len(self.list_paths_t1n)} and {len(self.list_paths_segm)}")        
@@ -64,19 +66,81 @@ class DatasetMRI(Dataset):
     def __getitem__(self, idx):
         pass
 
+    def _get_component_matrix(self, t1n_mask, path_component_matrix): 
+        """
+        Extracts connected components from mask or loads them if they already exist.
+
+        Args:
+            t1n_mask (np.ndarray): Mask of the t1n image
+            path_component_matrix (str): Path to the component matrix
+        
+        Returns:
+            component_matrix (torch.Tensor): Matrix containing the connected components
+            n (int): Number of connected components
+        """
+
+        # extract connected components from mask or load them if they are already exist
+        if os.path.isfile(path_component_matrix):
+            component_matrix = torch.load(path_component_matrix)
+            n = torch.max(component_matrix).item()
+        else:
+            component_matrix, n = label(t1n_mask)
+            component_matrix = torch.tensor(component_matrix)
+            torch.save(component_matrix, path_component_matrix)
+
+        return component_matrix, n
+
         
     def _get_white_matter_segm(self, segm_path: str):
+        """
+        Restricts the slices to white matter regions.
+
+        Args:
+            segm_path (str): Path to the segmentation file
+
+        Returns:
+            binary_white_matter_segm (np.ndarray): Binary mask of the white matter regions
+        """
+
         t1n_segm = nib.load(segm_path)
         t1n_segm = t1n_segm.get_fdata()
 
-        #transform segmentation if the segmentation came from Direct+DL
+        # transform segmentation if the segmentation came from Direct+DL
         if self.directDL:
             t1n_segm = np.transpose(t1n_segm)
             t1n_segm = np.flip(t1n_segm, axis=1)
         
+        # restrict slices to white matter regions
         binary_white_matter_segm = np.logical_or(t1n_segm==41, t1n_segm==2)
 
         return binary_white_matter_segm
+    
+    def _get_mask(self, path_mask, path_segm):
+        """
+        Loads the mask and restricts it to white matter regions if a segmentation is given.
+
+        Args:
+            path_mask (str): Path to the mask file
+            path_segm (str): Path to the segmentation file
+
+        Returns:
+            t1n_mask (np.ndarray): Mask of the t1n image
+        """
+
+        t1n_mask = nib.load(path_mask)
+        t1n_mask = t1n_mask.get_fdata()
+
+        # if there is a segmentation restrict mask to white matter regions
+        if(self.list_paths_segm):
+            binary_white_matter_segm = self._get_white_matter_segm(path_segm) 
+            t1n_mask = binary_white_matter_segm * t1n_mask
+
+        if (not t1n_mask.any()):
+            print("skip t1n, because no mask inside white matter detected")
+            return None
+        
+        return t1n_mask
+
 
     def _padding(self, t1n: torch.tensor):
         """

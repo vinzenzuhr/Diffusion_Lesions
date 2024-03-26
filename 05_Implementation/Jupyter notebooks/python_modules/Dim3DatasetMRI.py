@@ -4,23 +4,57 @@ import numpy as np
 from pathlib import Path
 from typing import Tuple
 import torch
+import os
+from scipy.ndimage import label
+from tqdm.auto import tqdm
 
 class Dim3DatasetMRI(DatasetMRI):
-    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, pad_shape=(256,256,256), directDL: bool = True, seed: int = None):
-        super().__init__(root_dir_img, root_dir_segm, root_dir_masks, pad_shape, directDL, seed)
+    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, pad_shape=(256,256,256), directDL: bool = True, seed: int = None, only_connected_masks: bool = True):
+        super().__init__(root_dir_img, root_dir_segm, root_dir_masks, pad_shape, directDL, seed, only_connected_masks)
+
 
         idx=0 
-        for i in np.arange(len(self.list_paths_t1n)): 
-            j=0
+        for i in tqdm(np.arange(len(self.list_paths_t1n))): 
+            idx_mask=0
             while True:
-                self.idx_to_element[idx]=(
-                    self.list_paths_t1n[i], 
-                    self.list_paths_segm[i] if self.list_paths_segm else None, 
-                    self.list_paths_masks[i][j] if self.list_paths_masks else None)
-                idx += 1
-                
-                if(self.list_paths_masks and len(self.list_paths_masks)-1>j):
-                    j+=1 
+                # extract connected components from mask or load them if they are already exist
+                if only_connected_masks: 
+                    #get mask and calculcate components
+                    t1n_mask = self._get_mask(self.list_paths_masks[i][idx_mask], self.list_paths_segm[i])
+                    if (t1n_mask is None):
+                        continue
+
+                    path_component_matrix = os.path.splitext(self.list_paths_masks[i][idx_mask])[0] + "_component_matrix.npy"
+                    component_matrix, n = self._get_component_matrix(t1n_mask, path_component_matrix) 
+
+                    # get only connected masks with a minimum volume
+                    min_volume=400#25
+                    list_component_labels=[]
+                    for j in torch.arange(1, n+1):
+                        volume=torch.count_nonzero(component_matrix==j)
+                        if volume > min_volume:
+                            list_component_labels.append(int(j))
+                    
+                    # add list of connected masks to dataset
+                    if len(list_component_labels) > 0:
+                        self.idx_to_element[idx]=(
+                            self.list_paths_t1n[i], 
+                            self.list_paths_segm[i] if self.list_paths_segm else None, 
+                            self.list_paths_masks[i][idx_mask] if self.list_paths_masks else None,
+                            path_component_matrix if only_connected_masks else None,
+                            list_component_labels if only_connected_masks else None)   
+                        idx += 1
+                else:
+                    self.idx_to_element[idx]=(
+                        self.list_paths_t1n[i], 
+                        self.list_paths_segm[i] if self.list_paths_segm else None, 
+                        self.list_paths_masks[i][idx_mask] if self.list_paths_masks else None,
+                        None,
+                        None) 
+                    idx += 1
+
+                if(self.list_paths_masks and len(self.list_paths_masks[i])-1>idx_mask):
+                    idx_mask+=1 
                 else:
                     break
 
@@ -28,6 +62,9 @@ class Dim3DatasetMRI(DatasetMRI):
             t1n_path = self.idx_to_element[idx][0] 
             segm_path = self.idx_to_element[idx][1]
             mask_path = self.idx_to_element[idx][2]
+            if self.only_connected_masks:
+                component_matrix_path = self.idx_to_element[idx][3]
+                components = self.idx_to_element[idx][4]
 
             # load t1n img
             t1n_img = nib.load(t1n_path)
@@ -55,17 +92,27 @@ class Dim3DatasetMRI(DatasetMRI):
 
             # load masks 
             if(mask_path): 
-                mask = nib.load(mask_path)
-                mask = mask.get_fdata()
+                if self.only_connected_masks: 
+                    # create mask from random connected components
+                    component_matrix = torch.load(component_matrix_path) 
+                    rand_n = 1 if len(components) == 1 else torch.randint(1, len(components), (1,)).item() 
+                    rand_components_idx = torch.randperm(len(components))[:rand_n] 
+                    mask = torch.zeros_like(component_matrix)
+                    for idx in rand_components_idx: 
+                        mask[component_matrix == components[idx]] = 1 
+                else:
+                    mask = nib.load(mask_path)
+                    mask = mask.get_fdata()
 
-                # if there is a segmentation restrict mask to white matter regions
-                if(segm_path):
-                    binary_white_matter_segm = self._get_white_matter_segm(segm_path) 
-                    mask = binary_white_matter_segm * mask 
+                    # if there is a segmentation restrict mask to white matter regions
+                    if(segm_path):
+                        binary_white_matter_segm = self._get_white_matter_segm(segm_path) 
+                        mask = binary_white_matter_segm * mask 
 
-                # pad to pad_shape
                 mask = torch.Tensor(mask)
-                mask = self._padding(mask)
+                mask = self._padding(mask.to(torch.uint8))
+                # invert mask, where 0 defines the part to inpaint
+                mask = 1-mask 
             else:
                 mask = None
             
