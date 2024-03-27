@@ -98,8 +98,8 @@ class Dim3DatasetMRI(DatasetMRI):
                     rand_n = 1 if len(components) == 1 else torch.randint(1, len(components), (1,)).item() 
                     rand_components_idx = torch.randperm(len(components))[:rand_n] 
                     mask = torch.zeros_like(component_matrix)
-                    for idx in rand_components_idx: 
-                        mask[component_matrix == components[idx]] = 1 
+                    for rand_idx in rand_components_idx: 
+                        mask[component_matrix == components[rand_idx]] = 1 
                 else:
                     mask = nib.load(mask_path)
                     mask = mask.get_fdata()
