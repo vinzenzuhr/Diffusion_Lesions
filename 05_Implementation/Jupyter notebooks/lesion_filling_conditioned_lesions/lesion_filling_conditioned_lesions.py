@@ -24,10 +24,11 @@ class TrainingConfig:
     gradient_accumulation_steps = 1
     learning_rate = 1e-4
     lr_warmup_steps = 100 #500
-    evaluate_epochs = 1 #30
-    evaluate_save_img_epochs = 20 #30
-    evaluate_3D_epochs = 40 #30
-    save_model_epochs = 60 # 300
+    evaluate_epochs = 20
+    evaluate_num_batches = 20 # one batch needs ~15s 
+    evaluate_save_img_epochs = 20
+    evaluate_3D_epochs = sys.maxint
+    save_model_epochs = 60
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
     output_dir = "lesion-filling-256-cond-lesions"  # the model name locally and on the HF Hub
     dataset_train_path = "./dataset_train/imgs"
@@ -40,7 +41,7 @@ class TrainingConfig:
     train_only_connected_masks=True
     eval_only_connected_masks=False
     num_inference_steps=50
-    debug=False
+    debug=True
     #uniform_dataset_path = "./uniform_dataset"
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub
@@ -59,6 +60,8 @@ if config.debug:
     config.train_batch_size = 1
     config.eval_batch_size = 1
     config.num_gpu=1
+    config.train_only_connected_masks=False
+    config.eval_only_connected_masks=False
 
 
 # In[4]:
@@ -119,14 +122,16 @@ fig.show()
 
 # ### Prepare Training
 
-# In[8]:
+# In[1]:
 
 
 from torch.utils.data import DataLoader
+from torch.utils.data import RandomSampler
 
 # create dataloader function, which is executed inside the training loop (necessary because of huggingface accelerate)
-def get_dataloader(dataset, batch_size, shuffle, num_workers=4):
-    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
+def get_dataloader(dataset, batch_size, num_workers=4, random_sampler=False): 
+    sampler = RandomSampler(dataset, generator=(None if random_sampler else torch.cuda.manual_seed_all(config.seed)))
+    return DataLoader(dataset, batch_size=batch_size, num_workers=num_workers, sampler=sampler)
 
 
 # In[9]:
@@ -176,10 +181,7 @@ noise = torch.randn(sample_image.shape)
 timesteps = torch.LongTensor([50])
 noisy_image = noise_scheduler.add_noise(sample_image, noise, timesteps)
 
-
 #tb_summary.add_text("noise_scheduler", "DDIMScheduler(num_train_timesteps=1000)", 0) 
-
-
 
 
 # In[11]:
@@ -206,8 +208,6 @@ from typing import List, Optional, Tuple, Union
 
 from diffusers import DiffusionPipeline, DDIMScheduler, ImagePipelineOutput
 from diffusers.utils.torch_utils import randn_tensor
-
-
 
 class DDIMInpaintPipeline(DiffusionPipeline):
     r"""
@@ -361,7 +361,7 @@ def generate_masks(n, device, generator=None):
     return masks
 
 
-# In[32]:
+# In[3]:
 
 
 #setup evaluation
@@ -369,18 +369,28 @@ from diffusers.utils import make_image_grid
 from torchvision.transforms.functional import to_pil_image
 from torcheval.metrics import PeakSignalNoiseRatio
 #from torcheval.metrics import StructuralSimilarity
-from skimage.metrics import structural_similarity
+from skimage.metrics import structural_similarity, mean_squared_error
 import os
 
 def evaluate(config, epoch, pipeline, eval_dataloader, global_step, tb_summary):
     #initialize metrics
-    PSNR_mean=0
-    SSIM_mean=0  
-    
-    for batch in eval_dataloader:
+    PSNR_mean = 0
+    SSIM_mean = 0  
+    MSE_mean = 0
+ 
+
+    # get 4 random slices
+    rand_samples_idx = torch.randint(0, len(datasetEvaluation), size=(config.evaluate_num_batches*config.eval_batch_size,), generator=torch.cuda.manual_seed_all(config.seed))
+    chunks = torch.chunk(rand_samples_idx, math.ceil(rand_samples_idx.shape[0]/config.eval_batch_size), dim=0)
+    for chunk in chunks:
+        batch = [datasetEvaluation[int(x)] for x in rand_samples_idx]
+        clean_images = [x["gt_image"] for x in batch]
+        clean_images = torch.stack(clean_images).to(images.device)
+        masks = [x["mask"] for x in batch]
+        masks = torch.stack(masks).to(images.device)  
         #get batch
-        clean_images = batch["gt_image"]
-        masks = batch["mask"]
+        #clean_images = batch["gt_image"]
+        #masks = batch["mask"]
         voided_images = clean_images*masks
         
         images = pipeline(
@@ -390,7 +400,7 @@ def evaluate(config, epoch, pipeline, eval_dataloader, global_step, tb_summary):
             generator=torch.cuda.manual_seed_all(config.seed),
             output_type=np.array,
             num_inference_steps = config.num_inference_steps
-        ).images  
+        ).images
         images = (torch.tensor(images)).to(clean_images.device) 
         images = torch.permute(images, (0, 3, 1, 2)) 
     
@@ -414,13 +424,27 @@ def evaluate(config, epoch, pipeline, eval_dataloader, global_step, tb_summary):
         SSIM = mssim_sum / batch_size
         SSIM_mean += SSIM 
 
+        #MSE metric
+        mse_sum=0
+        for idx in range(batch_size):
+            mse = mean_squared_error(
+                images[idx].detach().cpu().numpy(),
+                clean_images[idx].detach().cpu().numpy(), 
+            )
+            mse_sum += mse
+        MSE = mse_sum / batch_size
+        MSE_mean += MSE
+
     # log metrics
     PSNR_mean /= len(eval_dataloader)
     SSIM_mean /= len(eval_dataloader)
+    MSE_mean /= len(eval_dataloader)
     tb_summary.add_scalar("PSNR_global", PSNR_mean, global_step) 
     tb_summary.add_scalar("SSIM_global", SSIM_mean, global_step)
+    tb_summary.add_scalar("MSE_global", MSE_mean, global_step)
     print("SSIM_global: ", SSIM_mean)
     print("PSNR_global: ", PSNR_mean)
+    print("MSE_global: ", MSE_mean)
     print("global_step: ", global_step)
 
     # save sample images
@@ -467,14 +491,7 @@ def evaluate(config, epoch, pipeline, eval_dataloader, global_step, tb_summary):
         print("image saved") 
 
 
-# In[ ]:
-
-
-config.eval_batch_size=2
-train_loop(**args)
-
-
-# In[27]:
+# In[2]:
 
 
 import math
@@ -538,7 +555,7 @@ def dim3evaluate(config, epoch, pipeline, dim3eval_dataloader, global_step, tb_s
     print("Finish 3D evaluation")
 
 
-# In[17]:
+# In[16]:
 
 
 def meta_logs(tb_summary):
@@ -563,7 +580,7 @@ def meta_logs(tb_summary):
     tb_summary.add_text("inference_pipeline", "DDIMPipeline", 0)  
 
 
-# In[20]:
+# In[17]:
 
 
 #from accelerate import Accelerator
@@ -597,9 +614,9 @@ def train_loop(config, model, noise_scheduler, optimizer, lr_scheduler):
         os.makedirs(segmentation_dir, exist_ok=True)
         accelerator.init_trackers("train_example")
 
-    train_dataloader = get_dataloader(dataset = datasetTrain, batch_size = config.train_batch_size, shuffle=True) 
-    eval_dataloader = get_dataloader(dataset = datasetEvaluation, batch_size = config.eval_batch_size, shuffle=False) 
-    dim3_eval_dataloader = get_dataloader(dataset = dataset3DEvaluation, batch_size = 1, shuffle=False) 
+    train_dataloader = get_dataloader(dataset = datasetTrain, batch_size = config.train_batch_size, random_sampler=True) 
+    eval_dataloader = get_dataloader(dataset = datasetEvaluation, batch_size = config.eval_batch_size, random_sampler=False) 
+    dim3_eval_dataloader = get_dataloader(dataset = dataset3DEvaluation, batch_size = 1, random_sampler=False) 
 
     model, optimizer, train_dataloader, eval_dataloader, dim3_eval_dataloader, lr_scheduler = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader, dim3_eval_dataloader, lr_scheduler
@@ -688,17 +705,17 @@ def train_loop(config, model, noise_scheduler, optimizer, lr_scheduler):
             model.eval()
             pipeline = DDIMInpaintPipeline(unet=accelerator.unwrap_model(model), scheduler=noise_scheduler) 
     
-            if (epoch) % config.evaluate_epochs == 0 or epoch == config.num_epochs - 1:
+            if (epoch) % config.evaluate_epochs == 0 or epoch == config.num_epochs - 1: 
                 evaluate(config, epoch, pipeline, eval_dataloader, global_step, tb_summary)
     
             if (epoch) % config.save_model_epochs == 0 or epoch == config.num_epochs - 1: 
                 pipeline.save_pretrained(config.output_dir)
 
-            if (epoch) % config.evaluate_3D_epochs == 0 or epoch == config.num_epochs - 1: 
+            if (epoch) % config.evaluate_3D_epochs == 0 or epoch == config.num_epochs - 1:   
                 dim3evaluate(config, epoch, pipeline, dim3_eval_dataloader, global_step, tb_summary)
 
 
-# In[19]:
+# In[18]:
 
 
 from accelerate import notebook_launcher
