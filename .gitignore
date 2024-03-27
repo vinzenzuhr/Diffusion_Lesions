@@ -4,3 +4,5 @@
 05_Implementation/Jupyter notebooks/lesion_filling_conditioned_circles/segmentation_models
 04_Datasets
 05_Implementation/Jupyter notebooks/*/lesion-filling-256*
+*.npy
+__pycache__/
