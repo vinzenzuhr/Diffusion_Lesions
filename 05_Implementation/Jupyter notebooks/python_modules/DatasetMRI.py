@@ -280,5 +280,5 @@ class DatasetMRI(Dataset):
             file_map: File map of the original t1n image
             dtype: Data type of the original t1n image
         """  
-        t1n = nib.nifti1.Nifti1Image(t1n.squeeze().numpy(), affine=affine, header=header, extra=extra, file_map=file_map, dtype=dtype)
+        t1n = nib.nifti1.Nifti1Image(t1n.squeeze().cpu().numpy(), affine=affine, header=header, extra=extra, file_map=file_map, dtype=dtype)
         nib.save(t1n, path)
