@@ -8,9 +8,9 @@ import os
 from scipy.ndimage import label
 from tqdm.auto import tqdm
 
-class Dim3DatasetMRI(DatasetMRI):
-    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, pad_shape=(256,256,256), directDL: bool = True, seed: int = None, only_connected_masks: bool = True):
-        super().__init__(root_dir_img, root_dir_segm, root_dir_masks, pad_shape, directDL, seed, only_connected_masks)
+class DatasetMRI3D(DatasetMRI):
+    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, directDL: bool = True, seed: int = None, only_connected_masks: bool = True):
+        super().__init__(root_dir_img, root_dir_segm, root_dir_masks, directDL, seed, only_connected_masks)
 
 
         idx=0 
@@ -121,7 +121,8 @@ class Dim3DatasetMRI(DatasetMRI):
                 "gt_image": t1n_img.unsqueeze(0), 
                 "segm": t1n_segm, 
                 "mask": mask.unsqueeze(0), 
-                "max_v": t1n_max_v,
-                "idx": int(idx),
+                "max_v": t1n_max_v, 
+                "idx": int(idx), 
+                "name": t1n_path.parent.stem 
             } 
             return sample_dict

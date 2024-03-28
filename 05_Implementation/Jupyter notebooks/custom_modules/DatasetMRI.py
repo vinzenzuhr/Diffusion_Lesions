@@ -32,10 +32,13 @@ class DatasetMRI(Dataset):
             
     """
 
-    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, pad_shape: Tuple = (256,256,256), directDL: bool = True, seed: int = None, only_connected_masks: bool = False):
+    
+    reference_shape = (256,256,160)
+    pad_shape = (256,256,256)
+
+    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, directDL: bool = True, seed: int = None, only_connected_masks: bool = False):
         #Initialize variables
         self.root_dir_img = root_dir_img 
-        self.pad_shape = pad_shape
         self.directDL = directDL
         if(root_dir_masks):
             #make a list of lists containing all paths to masks
@@ -51,7 +54,6 @@ class DatasetMRI(Dataset):
             self.list_paths_segm = None 
         self.list_paths_t1n = list(root_dir_img.rglob("*.nii.gz"))
         self.idx_to_element = dict()
-        self.reference_shape = (256,256,160)
         self.seed = seed  
         self.only_connected_masks = only_connected_masks
 
@@ -141,8 +143,8 @@ class DatasetMRI(Dataset):
         
         return t1n_mask
 
-
-    def _padding(self, t1n: torch.tensor):
+    @staticmethod
+    def _padding(t1n: torch.tensor):
         """
         Pads the images to the pad_shape. 
 
@@ -154,7 +156,7 @@ class DatasetMRI(Dataset):
         """
 
         #pad to bounding box
-        size = self.pad_shape # shape of bounding box is (size,size,size)
+        size = DatasetMRI.pad_shape # shape of bounding box is (size,size,size)
         d, w, h = t1n.shape[-3], t1n.shape[-2], t1n.shape[-1]
         d_max, w_max, h_max = size
         d_pad = max((d_max - d) / 2, 0)
@@ -171,8 +173,8 @@ class DatasetMRI(Dataset):
         t1n = F.pad(t1n, padding, value=0, mode="constant") 
         return t1n
 
-    
-    def postprocess(self, t1n: torch.Tensor, t1n_max_v: float):
+    @staticmethod
+    def postprocess(t1n: torch.Tensor, t1n_max_v: float):
         """
         Transforms the images back to their original format.
         Maps from [-1,1] to [0,1] and scales to original max value.
@@ -190,7 +192,7 @@ class DatasetMRI(Dataset):
 
         #remove padding
         d, w, h = t1n.shape[-3], t1n.shape[-2], t1n.shape[-1]
-        d_new, w_new, h_new = self.reference_shape # (256,256,160)
+        d_new, w_new, h_new = DatasetMRI.reference_shape # (256,256,160)
         
         d_unpad = max((d - d_new) / 2, 0)
         w_unpad = max((w - w_new) / 2, 0)
@@ -210,7 +212,8 @@ class DatasetMRI(Dataset):
         t1n *= t1n_max_v
         return t1n
 
-    def preprocess(self, t1n: np.ndarray):
+    @staticmethod
+    def preprocess(t1n: np.ndarray):
         """
         Transforms the images to a more unified format.
         Normalizes to -1,1. Pad and crop to bounding box.
@@ -227,8 +230,8 @@ class DatasetMRI(Dataset):
         """
 
         #Size assertions
-        if t1n.shape != self.reference_shape:
-            raise UserWarning(f"Your t1n shape is not {self.reference_shape}, it is {t1n.shape}")
+        if t1n.shape != DatasetMRI.reference_shape:
+            raise UserWarning(f"Your t1n shape is not {DatasetMRI.reference_shape}, it is {t1n.shape}")
 
         #Normalize the image to [0,1]
         t1n[t1n<0] = 0 #Values below 0 are considered to be noise #TODO: Check validity
@@ -237,7 +240,7 @@ class DatasetMRI(Dataset):
 
         #pad the image to pad_shape
         t1n = torch.Tensor(t1n)
-        t1n = self._padding(t1n)
+        t1n = DatasetMRI._padding(t1n)
 
         #map images from [0,1] to [-1,1]
         t1n = (t1n*2) - 1
@@ -267,7 +270,8 @@ class DatasetMRI(Dataset):
         }
         return metadata
 
-    def save(self, t1n: torch.Tensor, path: Path, affine: np.ndarray, header: nib.Nifti1Header = None, extra = None, file_map = None, dtype = None):
+    @staticmethod
+    def save(t1n: torch.Tensor, path: Path, affine: np.ndarray, header: nib.Nifti1Header = None, extra = None, file_map = None, dtype = None):
         """
         Saves the t1n to a file.
         

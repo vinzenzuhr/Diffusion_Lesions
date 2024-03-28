@@ -8,9 +8,9 @@ from scipy.ndimage import label
 import os
 from tqdm.auto import tqdm
 
-class Dim2DatasetMRI(DatasetMRI):
-    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, pad_shape: Tuple = (256,256,256), directDL: bool = True, seed: int = None, only_connected_masks: bool = True):
-        super().__init__(root_dir_img, root_dir_segm, root_dir_masks, pad_shape, directDL, seed, only_connected_masks)
+class DatasetMRI2D(DatasetMRI):
+    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, directDL: bool = True, seed: int = None, only_connected_masks: bool = True):
+        super().__init__(root_dir_img, root_dir_segm, root_dir_masks, directDL, seed, only_connected_masks)
 
         # go through all 3D segmentation and add relevant 2D slices to dict
         idx=0
@@ -167,5 +167,6 @@ class Dim2DatasetMRI(DatasetMRI):
                 "mask": mask_slice.unsqueeze(0),
                 "max_v": t1n_max_v,
                 "idx": int(idx),
+                "name": t1n_path.parent.stem,
             } 
             return sample_dict 
