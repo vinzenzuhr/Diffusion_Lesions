@@ -6,3 +6,4 @@
 05_Implementation/Jupyter notebooks/*/lesion-filling-256*
 *.npy
 __pycache__/
+06_Trainings/
