@@ -1,23 +1,38 @@
 import csv 
+from pathlib import Path
+import sys
 
-file1="test1.csv"
-file2="test2.csv"
-result="result.csv"
+folder1 = Path(sys.argv[1]) # "dataset_eval/segm"
+folder2 = Path(sys.argv[2]) # "lesion-filling-256-cond-lesions/segmentations_3D"
 
-lines1 = []
-with open(file1, 'r', newline='') as csvfile:
-    reader = csv.reader(csvfile, delimiter=',')
-    header = next(reader)
-    values = next(reader)
-with open(file2, 'r', newline='') as csvfile:
-    reader = csv.reader(csvfile, delimiter=',')
-    header_2 = next(reader)
-    values_2 = next(reader)
-#start at 1 to skip patient name
-diff = [float(values[i])-float(values_2[i]) for i in range(1, len(values))]
-diff.insert(0, values[0])
 
-with open(result, 'w', newline='') as csvfile:
-    writer = csv.writer(csvfile, delimiter=',')
-    writer.writerow(header)   
-    writer.writerow(diff)
+file_list1 = list(folder1.rglob("*result-thick.csv"))
+file_list2 = list(folder2.rglob("*result-thick.csv"))
+file_list3 = list(folder1.rglob("*result-thickstd.csv"))
+file_list4 = list(folder2.rglob("*result-thickstd.csv"))
+
+lists = [[file_list1, file_list2], [file_list3, file_list4]]
+
+for list1, list2 in lists:
+    for file1, file2 in zip(list1, list2):
+        lines1 = []
+        with open(file1, 'r', newline='') as csvfile:
+            reader = csv.reader(csvfile, delimiter=',')
+            header = next(reader)
+            values = next(reader)
+        with open(file2, 'r', newline='') as csvfile:
+            reader = csv.reader(csvfile, delimiter=',')
+            header_2 = next(reader)
+            values_2 = next(reader)
+        #start at 1 to skip patient name
+        diff = [float(values[i])-float(values_2[i]) for i in range(1, len(values))]
+        diff.insert(0, values[0])
+
+        result = file2.parent / (file2.stem + "_diff.csv")
+
+        with open(result, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile, delimiter=',')
+            writer.writerow(header)   
+            writer.writerow(diff)
+
+
