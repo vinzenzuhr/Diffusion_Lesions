@@ -36,13 +36,12 @@ class TrainingConfig:
     masks_train_path = "./dataset_train/masks"
     dataset_eval_path = "./dataset_eval/imgs"
     segm_eval_path = "./dataset_eval/segm"
-    masks_eval_path = "./dataset_eval/masks"
-    num_gpu=2
+    masks_eval_path = "./dataset_eval/masks" 
     train_only_connected_masks=True
     eval_only_connected_masks=False
     num_inference_steps=50
-    debug=True
-    #uniform_dataset_path = "./uniform_dataset"
+    mode = "train" # train / eval
+    debug = True 
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub
     #hub_model_id = "<your-username>/<my-awesome-model>"  # the name of the repository to create on the HF Hub
@@ -58,11 +57,13 @@ config = TrainingConfig()
 if config.debug:
     config.num_inference_steps=5
     config.train_batch_size = 1
-    config.eval_batch_size = 1
-    config.num_gpu=1
+    config.eval_batch_size = 1 
     config.train_only_connected_masks=False
     config.eval_only_connected_masks=False
     config.evaluate_num_batches=1
+    dataset_train_path = "./dataset_eval/imgs"
+    segm_train_path = "./dataset_eval/segm"
+    masks_train_path = "./dataset_eval/masks" 
 
 
 # In[4]:
@@ -78,18 +79,14 @@ accelerate.commands.config.default.write_basic_config(config.mixed_precision)
 # In[5]:
 
 
-from Dim2DatasetMRI import Dim2DatasetMRI
-from Dim3DatasetMRI import Dim3DatasetMRI
+from DatasetMRI2D import DatasetMRI2D
+from DatasetMRI3D import DatasetMRI3D
 from pathlib import Path
 
 #create dataset
-datasetTrain = Dim2DatasetMRI(Path(config.dataset_train_path), Path(config.segm_train_path), Path(config.masks_train_path), only_connected_masks=config.train_only_connected_masks)
-datasetEvaluation = Dim2DatasetMRI(Path(config.dataset_eval_path), Path(config.segm_eval_path), Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks)
-dataset3DEvaluation = Dim3DatasetMRI(Path(config.dataset_eval_path), Path(config.segm_eval_path), Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks)
-
-print(f"Dataset size: {len(datasetTrain)}")
-print(f"\tImage shape: {datasetTrain[0]['gt_image'].shape}")
-print(f"Training Data: {list(datasetTrain[0].keys())}") 
+datasetTrain = DatasetMRI2D(Path(config.dataset_train_path), Path(config.segm_train_path), Path(config.masks_train_path), only_connected_masks=config.train_only_connected_masks)
+datasetEvaluation = DatasetMRI2D(Path(config.dataset_eval_path), Path(config.segm_eval_path), Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks)
+dataset3DEvaluation = DatasetMRI3D(Path(config.dataset_eval_path), Path(config.segm_eval_path), Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks)
 
 
 # ### Visualize dataset
@@ -126,6 +123,7 @@ fig.show()
 # In[8]:
 
 
+"""
 from torch.utils.data import DataLoader
 from torch.utils.data import RandomSampler
 import random
@@ -142,6 +140,7 @@ def reset_seed(worker_id=0):
 def get_dataloader(dataset, batch_size, num_workers=4, random_sampler=False): 
     sampler = RandomSampler(dataset, generator=(None if random_sampler else torch.cuda.manual_seed_all(config.seed)))
     return DataLoader(dataset, batch_size=batch_size, num_workers=num_workers, sampler=sampler, worker_init_fn=(None if random_sampler else reset_seed))
+"""
 
 
 # In[9]:
@@ -174,7 +173,7 @@ model = UNet2DModel(
     ),
 )
 
-#tb_summary.add_text("model", "UNet2DModel", 0) 
+config.model = "UNet2DModel"
 
 
 # In[10]:
@@ -186,12 +185,12 @@ from PIL import Image
 from diffusers import DDIMScheduler
 
 noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
-sample_image = datasetTrain[0]['gt_image'].unsqueeze(0)
-noise = torch.randn(sample_image.shape)
-timesteps = torch.LongTensor([50])
-noisy_image = noise_scheduler.add_noise(sample_image, noise, timesteps)
+#sample_image = datasetTrain[0]['gt_image'].unsqueeze(0)
+#noise = torch.randn(sample_image.shape)
+#timesteps = torch.LongTensor([50])
+#noisy_image = noise_scheduler.add_noise(sample_image, noise, timesteps)
 
-#tb_summary.add_text("noise_scheduler", "DDIMScheduler(num_train_timesteps=1000)", 0) 
+config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
 
 
 # In[11]:
@@ -208,407 +207,13 @@ lr_scheduler = get_cosine_schedule_with_warmup(
     num_training_steps=(math.ceil(len(datasetTrain)/config.train_batch_size) * config.num_epochs), # num_iterations per epoch * num_epochs
 )
 
-#tb_summary.add_text("lr_scheduler", "cosine_schedule_with_warmup", 0) 
+config.lr_scheduler = "cosine_schedule_with_warmup"
 
 
-# In[13]:
-
-
-"""from diffusers import DiffusionPipeline, DDIMScheduler, ImagePipelineOutput
-from diffusers.utils.torch_utils import randn_tensor
-from typing import List, Optional, Tuple, Union
-
-class DDIMInpaintPipeline(DiffusionPipeline):
-    
-        Pipeline for image inpainting.
-
-    This model inherits from [`DiffusionPipeline`]. Check the superclass documentation for the generic methods
-    implemented for all pipelines (downloading, saving, running on a particular device, etc.).
-
-    Parameters:
-        unet ([`UNet2DModel`]):
-            A `UNet2DModel` to denoise the encoded image latents.
-        scheduler ([`SchedulerMixin`]):
-            A scheduler to be used in combination with `unet` to denoise the encoded image. Can be one of
-            [`DDPMScheduler`], or [`DDIMScheduler`].
-    
-
-    model_cpu_offload_seq = "unet"
-
-    def __init__(self, unet, scheduler):
-        super().__init__()
-
-        # make sure scheduler can always be converted to DDIM
-        scheduler = DDIMScheduler.from_config(scheduler.config)
-
-        self.register_modules(unet=unet, scheduler=scheduler)
-
-    @torch.no_grad()
-    def __call__(
-        self,
-        voided_imgs: torch.tensor,
-        masks: torch.tensor,
-        batch_size: int = 1,
-        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-        eta: float = 0.0,
-        num_inference_steps: int = 50,
-        use_clipped_model_output: Optional[bool] = None,
-        output_type: Optional[str] = "pil",
-        return_dict: bool = True,
-    ) -> Union[ImagePipelineOutput, Tuple]:
-        r
-        The call function to the pipeline for generation.
-
-        Args:
-            voided_imgs ('torch.tensor'): 
-                Images (1 channel) which should be inpainted.
-            masks ('torch.tensor'): 
-                Binary masks which includes the area to inpaint.
-            batch_size (`int`, *optional*, defaults to 1):
-                The number of images to generate.
-            generator (`torch.Generator`, *optional*):
-                A [`torch.Generator`](https://pytorch.org/docs/stable/generated/torch.Generator.html) to make
-                generation deterministic.
-            eta (`float`, *optional*, defaults to 0.0):
-                Corresponds to parameter eta (η) from the [DDIM](https://arxiv.org/abs/2010.02502) paper. Only applies
-                to the [`~schedulers.DDIMScheduler`], and is ignored in other schedulers. A value of `0` corresponds to
-                DDIM and `1` corresponds to DDPM.
-            num_inference_steps (`int`, *optional*, defaults to 50):
-                The number of denoising steps. More denoising steps usually lead to a higher quality image at the
-                expense of slower inference.
-            use_clipped_model_output (`bool`, *optional*, defaults to `None`):
-                If `True` or `False`, see documentation for [`DDIMScheduler.step`]. If `None`, nothing is passed
-                downstream to the scheduler (use `None` for schedulers which don't support this argument).
-            output_type (`str`, *optional*, defaults to `"pil"`):
-                The output format of the generated image. Choose between `PIL.Image` or `np.array`.
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`~pipelines.ImagePipelineOutput`] instead of a plain tuple.
-
-        Returns:
-            [`~pipelines.ImagePipelineOutput`] or `tuple`:
-                If `return_dict` is `True`, [`~pipelines.ImagePipelineOutput`] is returned, otherwise a `tuple` is
-                returned where the first element is a list with the generated images
-        
-
-        # Sample gaussian noise to begin loop
-        if isinstance(self.unet.config.sample_size, int):
-            image_shape = (
-                batch_size,
-                self.unet.config.in_channels-2, # Minus the two channels for the mask and the img to be inpainted
-                self.unet.config.sample_size,
-                self.unet.config.sample_size,
-            )
-        else:
-            image_shape = (batch_size, self.unet.config.in_channels-2, *self.unet.config.sample_size) # Minus the two channels for the mask and the img to be inpainted
-
-        if isinstance(generator, list) and len(generator) != batch_size:
-            raise ValueError(
-                f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
-                f" size of {batch_size}. Make sure the batch size matches the length of the generators."
-            )
-
-        image = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)
-
-        # set step values
-        self.scheduler.set_timesteps(num_inference_steps)
-
-        #Input to unet model is concatenation of images, voided images and masks
-        input=torch.cat((image, voided_imgs, masks), dim=1)
-
-        for t in self.progress_bar(self.scheduler.timesteps):
-            # 1. predict noise model_output
-            model_output = self.unet(input, t).sample
-
-            # 2. predict previous mean of image x_t-1 and add variance depending on eta
-            # eta corresponds to η in paper and should be between [0, 1]
-            # do x_t -> x_t-1
-            image = self.scheduler.step(
-                model_output, t, image, eta=eta, use_clipped_model_output=use_clipped_model_output, generator=generator
-            ).prev_sample
-
-            #3. Concatenate image with voided images and masks
-            input=torch.cat((image, voided_imgs, masks), dim=1)
-
-        image = (image / 2 + 0.5).clamp(0, 1)
-        image = image.cpu().permute(0, 2, 3, 1).numpy()
-        if output_type == "pil":
-            image = self.numpy_to_pil(image)
-
-        if not return_dict:
-            return (image,)
-
-        return ImagePipelineOutput(images=image)
-"""
-
-
-# In[14]:
-
-
-"""def generate_masks(n, device, generator=None):
-    #create circular mask with random center around the center point of the pictures and a radius between 3 and 50 pixels
-    center=torch.normal(mean=config.image_size/2, std=30, size=(n,2), generator=generator, device=device) # 30 is chosen by inspection
-    low=3   
-    high=50
-    radius=torch.rand(n, device=device, generator=generator)*(high-low)+low # get radius between 3 and 50 from uniform distribution 
-
-    #Test case
-    #center=torch.tensor([[0,255],[0,255]]) 
-    #radius=torch.tensor([2,2])
-    
-    Y, X = [torch.arange(config.image_size, device=device)[:,None],torch.arange(config.image_size, device=device)[None,:]] # gives two vectors, each containing the pixel locations. There's a column vector for the column indices and a row vector for the row indices.
-    dist_from_center = torch.sqrt((X.T - center[:,0])[None,:,:]**2 + (Y-center[:,1])[:,None,:]**2) # creates matrix with euclidean distance to center
-    dist_from_center = dist_from_center.permute(2,0,1) 
-
-    #Test case
-    #print(dist_from_center[0,0,0]) #=255
-    #print(dist_from_center[0,0,255]) #=360.624
-    #print(dist_from_center[0,255,0]) #=0
-    #print(dist_from_center[0,255,255]) #=255
-    #print(dist_from_center[0,127,127]) #=180.313 
-    
-    masks = dist_from_center > radius[:,None,None] # creates mask for pixels which are outside the radius. 
-    masks = masks[:,None,:,:].int() 
-    return masks
-"""
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[15]:
-
-
-"""from torcheval.metrics import PeakSignalNoiseRatio
-from skimage.metrics import structural_similarity, mean_squared_error
-
-def _calc_metrics(image1, image2):
-    # PSNR metric
-    metric = PeakSignalNoiseRatio(device=image1.device)
-    metric.update(image1, image2)
-    PSNR = metric.compute().item()
-
-    # SSIM metric (torch_eval is outdated)
-    batch_size = image1.shape[0]
-    mssim_sum=0
-    for idx in range(batch_size):
-        mssim = structural_similarity(
-            image1[idx].detach().cpu().numpy(),
-            image2[idx].detach().cpu().numpy(),
-            channel_axis=0,
-            data_range=2
-        )
-        mssim_sum += mssim
-    SSIM = mssim_sum / batch_size
-
-    # MSE metric
-    mse_sum=0
-    for idx in range(batch_size):
-        mse = mean_squared_error(
-            image1[idx].detach().cpu().numpy(),
-            image2[idx].detach().cpu().numpy(), 
-        )
-        mse_sum += mse
-    MSE = mse_sum / batch_size
-
-    return PSNR, SSIM, MSE
-"""
-
-
-# In[16]:
-
-
-"""def _log_metrics(tb_summary, global_step, PSNR_mean, SSIM_mean, MSE_mean):
-    tb_summary.add_scalar("PSNR_global", PSNR_mean, global_step) 
-    tb_summary.add_scalar("SSIM_global", SSIM_mean, global_step)
-    tb_summary.add_scalar("MSE_global", MSE_mean, global_step)
-    print("SSIM_global: ", SSIM_mean)
-    print("PSNR_global: ", PSNR_mean)
-    print("MSE_global: ", MSE_mean)
-    print("global_step: ", global_step)
-"""
-
-
-# In[17]:
-
-
-"""import PIL 
-
-def _save_image(images: list[list[PIL.Image]], titles: list[str], path: Path, epoch: int):
-    os.makedirs(path, exist_ok=True)
-    for image_list, title in zip(images, titles): 
-        image_grid = make_image_grid(image_list, rows=int(len(image_list)**0.5), cols=int(len(image_list)**0.5))
-        image_grid.save(f"{path}/{title}_{epoch:04d}.png")
-    print("image saved")   
-"""
-
-
-# In[18]:
-
-
-"""#setup evaluation
-from diffusers.utils import make_image_grid
-from torchvision.transforms.functional import to_pil_image
-import os
-
-def evaluate(config, epoch, pipeline, eval_dataloader, global_step, tb_summary):
-    #initialize metrics
-    PSNR_mean = 0
-    SSIM_mean = 0  
-    MSE_mean = 0
-
-    reset_seed(0)
-    for n_iter, batch in enumerate(eval_dataloader): 
-        if n_iter >= config.evaluate_num_batches:
-            break
-            
-        # get batch
-        clean_images = batch["gt_image"]
-        masks = batch["mask"]
-        voided_images = clean_images*masks 
-
-        # run them through pipeline
-        inpainted_images = pipeline(
-            voided_images,
-            masks,
-            batch_size=masks.shape[0],
-            generator=torch.cuda.manual_seed_all(config.seed),
-            output_type=np.array,
-            num_inference_steps = config.num_inference_steps
-        ).images
-        inpainted_images = torch.from_numpy(inpainted_images).to(clean_images.device)
-        
-        # transform from B x H x W x C to B x C x H x W 
-        inpainted_images = torch.permute(inpainted_images, (0, 3, 1, 2))
-
-        PSNR, SSIM, MSE = _calc_metrics(clean_images, inpainted_images)
-        PSNR_mean += PSNR
-        SSIM_mean += SSIM 
-        MSE_mean += MSE
-        
-    # calculcate mean of metrics
-    PSNR_mean /= len(eval_dataloader)
-    SSIM_mean /= len(eval_dataloader)
-    MSE_mean /= len(eval_dataloader)
-
-    _log_metrics(tb_summary, global_step, PSNR_mean, SSIM_mean, MSE_mean)
-
-    # save last batch as sample images
-    if (epoch) % config.evaluate_save_img_epochs == 0 or epoch == config.num_epochs - 1:
-        # change range from [-1,1] to [0,1]
-        voided_images = (voided_images+1)/2
-        clean_images = (clean_images+1)/2
-        # change binary image from 0,1 to 0,255
-        masks = masks*255
-
-        # save images
-        list = [inpainted_images, voided_images, clean_images, masks]
-        title_list = ["inpainted_images", "voided_images", "clean_images", "masks"] 
-        image_list = [[to_pil_image(x, mode="L") for x in images] for images in list]
-        _save_image(image_list, title_list, os.path.join(config.output_dir, "samples_2D"), epoch)
-"""
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[19]:
+# In[12]:
 
 
 """
-import math
-import os
-
-def dim3evaluate(config, epoch, pipeline, dim3eval_dataloader, global_step, tb_summary):
-    #unused: global_step, tb_summary
-    print("Start 3D evaluation")
-    #batch = next(iter(dim3eval_dataloader)) #TODO: Anpassen, falls grösseres evaluation set
-
-    # go through every batch
-    for batch in dim3eval_dataloader:
-        # go through sample in batch
-        for sample_idx in torch.arange(batch["gt_image"].shape[0]):
-            clean_images = batch["gt_image"][sample_idx] #torch.Size([1, 256, 256, 256])
-            masks = batch["mask"][sample_idx]  #torch.Size([1, 256, 256, 256])
-            max_v = batch["max_v"][sample_idx]
-            idx = batch["idx"][sample_idx]
-        
-            voided_images = clean_images*masks
-        
-            #get slices which have to be inpainted
-            slice_indices = []
-            for slice_idx in torch.arange(voided_images.shape[2]):
-                if (1-masks[:, :, slice_idx, :]).any():
-                    slice_indices.append(slice_idx.unsqueeze(0)) 
-            slice_indices = torch.cat(slice_indices, 0)
-        
-            #create chunks of slices which have to be inpainted
-            stacked_void_mask = torch.stack((voided_images[:, :, slice_indices, :], masks[:, :, slice_indices, :]), dim=0)
-            stacked_void_mask = stacked_void_mask.permute(0, 3, 1, 2, 4) 
-            chunks = torch.chunk(stacked_void_mask, math.ceil(stacked_void_mask.shape[1]/config.eval_batch_size), dim=1)
-            
-            #inpaint all slices
-            inpainted_images = [] 
-            for chunk in chunks:
-                chunk_voided_images = chunk[0]
-                chunk_masks = chunk[1]
-
-                size = chunk_masks.shape[0]
-                
-                images = pipeline(
-                    chunk_voided_images,
-                    chunk_masks,
-                    batch_size=size,
-                    generator=torch.cuda.manual_seed_all(config.seed),
-                    output_type=np.array,
-                    num_inference_steps = config.num_inference_steps
-                ).images
-                inpainted_images.append(torch.from_numpy(images))
-            inpainted_images = torch.cat(inpainted_images, dim=0)
-            inpainted_images = inpainted_images.permute(3, 1, 0, 2)
-            inpainted_images = inpainted_images.to(clean_images.device())
-        
-            #overwrite the original 3D image with the inpainted 2D slices
-            clean_images[:, :, slice_indices, :] = inpainted_images
-        
-            #postprocess and save image as nifti file
-            clean_images = datasetEvaluation.postprocess(clean_images, max_v)
-        
-            test_dir = os.path.join(config.output_dir, "samples_3D")
-            os.makedirs(test_dir, exist_ok=True)
-            
-            datasetEvaluation.save(clean_images, f"{test_dir}/{idx}_{epoch:04d}.nii.gz", **datasetEvaluation.get_metadata(int(idx)))
-        
-    print("Finish 3D evaluation")
-"""
-
-
-# In[20]:
-
-
 def meta_logs(tb_summary):
     #log at tensorboard
     tb_summary.add_scalar("image_size", config.image_size, 0)
@@ -624,16 +229,19 @@ def meta_logs(tb_summary):
     tb_summary.add_scalar("train_only_connected_masks", config.train_only_connected_masks, 0)
     tb_summary.add_scalar("eval_only_connected_masks", config.eval_only_connected_masks, 0) 
     tb_summary.add_scalar("debug", config.debug, 0) 
+    tb_summary.add_text("mode", config.mode, 0) 
     tb_summary.add_text("conditional_data", "Lesions", 0) 
     tb_summary.add_text("noise_scheduler", "DDIMScheduler(num_train_timesteps=1000)", 0) 
     tb_summary.add_text("lr_scheduler", "cosine_schedule_with_warmup", 0)
     tb_summary.add_text("model", "UNet2DModel", 0) 
-    tb_summary.add_text("inference_pipeline", "DDIMPipeline", 0)  
+    tb_summary.add_text("inference_pipeline", "DDIMPipeline", 0)   
+"""
 
 
-# In[21]:
+# In[13]:
 
 
+"""
 #import custom modules
 from DDIMInpaintPipeline import DDIMInpaintPipeline
 from Evaluation2D import Evaluation2D
@@ -666,8 +274,6 @@ def train_loop(config, model, noise_scheduler, optimizer, lr_scheduler):
         
         if config.output_dir is not None:
             os.makedirs(config.output_dir, exist_ok=True) 
-        segmentation_dir = os.path.join(config.output_dir, "segmentations_3D")
-        os.makedirs(segmentation_dir, exist_ok=True)
         accelerator.init_trackers("train_example")
 
     train_dataloader = get_dataloader(dataset = datasetTrain, batch_size = config.train_batch_size, random_sampler=True)
@@ -700,8 +306,7 @@ def train_loop(config, model, noise_scheduler, optimizer, lr_scheduler):
         for step, batch in enumerate(train_dataloader): 
             
             clean_images = batch["gt_image"]
-            masks = batch["mask"]
-            
+            masks = batch["mask"] 
             # Sample noise to add to the images
             noise = torch.randn(clean_images.shape, device=clean_images.device)
             bs = clean_images.shape[0]
@@ -756,35 +361,105 @@ def train_loop(config, model, noise_scheduler, optimizer, lr_scheduler):
             if config.debug:
                 break
 
-        # After a certain number of epochs it samples some images with evaluate() and save the model
+        # After a certain number of epochs it does the evaluation and save the model
+        model.eval()
+        pipeline = DDIMInpaintPipeline(unet=accelerator.unwrap_model(model), scheduler=noise_scheduler)
+        pipeline = accelerator.prepare(pipeline)
+
+        if (epoch) % config.evaluate_epochs == 0 or epoch == config.num_epochs - 1: 
+            eval = Evaluation2D(config, pipeline, d2_eval_dataloader, None if not accelerator.is_main_process else tb_summary, accelerator)
+            eval.evaluate(epoch, global_step)
+
+        if (epoch) % config.evaluate_3D_epochs == 0 or epoch == config.num_epochs - 1: 
+            eval = Evaluation3D(config, pipeline, d3_eval_dataloader)  
+            eval.evaluate(epoch)
+    
         if accelerator.is_main_process:
-            model.eval()
-            pipeline = DDIMInpaintPipeline(unet=accelerator.unwrap_model(model), scheduler=noise_scheduler)
-            pipeline = accelerator.prepare(pipeline)
-    
-            if (epoch) % config.evaluate_epochs == 0 or epoch == config.num_epochs - 1: 
-                eval = Evaluation2D(config, pipeline, d2_eval_dataloader, tb_summary)
-                eval.evaluate(epoch, global_step)
-    
             if (epoch) % config.save_model_epochs == 0 or epoch == config.num_epochs - 1: 
                 pipeline.save_pretrained(config.output_dir)
+"""
 
-            if (epoch) % config.evaluate_3D_epochs == 0 or epoch == config.num_epochs - 1: 
-                eval = Evaluation3D(config, pipeline, d3_eval_dataloader, tb_summary)  
-                eval.evaluate(epoch)
+
+# In[14]:
+
+
+"""args = {"config": config, "model": model, "noise_scheduler": noise_scheduler, "optimizer": optimizer, "lr_scheduler": lr_scheduler} 
+if config.mode == "train":
+    train_loop(**args)
+"""
+
+
+# In[15]:
+
+
+"""
+# for 4 patient with 1 mask it takes ~13 min + ~18 min segmentation algorithm
+if config.mode == "eval":
+    # initialize accelerator, pipeline and tensorboard
+    accelerator = Accelerator(
+        mixed_precision=config.mixed_precision,
+        gradient_accumulation_steps=config.gradient_accumulation_steps, 
+        project_dir=os.path.join(config.output_dir, "tensorboard"),
+    )
+    pipeline = DDIMInpaintPipeline.from_pretrained(config.output_dir) 
+    if accelerator.is_main_process:
+        #setup tensorboard
+        tb_summary = SummaryWriter(config.output_dir, purge_step=0)
+        meta_logs(tb_summary)
+        
+    # setup dataloaders
+    d2_eval_dataloader = get_dataloader(dataset = datasetEvaluation, batch_size = config.eval_batch_size, random_sampler=False)
+    d3_eval_dataloader = get_dataloader(dataset = dataset3DEvaluation, batch_size = 1, random_sampler=False)
+
+    # move devices to gpu/cpu
+    pipeline, d2_eval_dataloader, d3_eval_dataloader = accelerator.prepare(pipeline, d2_eval_dataloader, d3_eval_dataloader)
+    pipeline.to(accelerator.device)
+
+    # start evaluation
+    eval = Evaluation2D(config, pipeline, d2_eval_dataloader, None if not accelerator.is_main_process else tb_summary, accelerator)
+    eval.evaluate(epoch=0, global_step=0)
+    eval = Evaluation3D(config, pipeline, d3_eval_dataloader)
+    eval.evaluate(epoch=0)
+"""
 
 
 # In[ ]:
 
 
-#from accelerate import notebook_launcher
 
-# If run from a jupyter notebook then uncomment the two lines and remove last line
-args = {"config": config, "model": model, "noise_scheduler": noise_scheduler, "optimizer": optimizer, "lr_scheduler": lr_scheduler}
-#notebook_launcher(train_loop, args, num_processes=config.num_gpu)
-#notebook_launcher(train_loop, args, num_processes=1)
 
-train_loop(**args)
+
+# In[16]:
+
+
+from TrainingConditional import TrainingConditional
+from DDIMInpaintPipeline import DDIMInpaintPipeline
+
+config.conditional_data = "Lesions"
+
+args = {"config": config, "model": model, "noise_scheduler": noise_scheduler, "optimizer": optimizer, "lr_scheduler": lr_scheduler, "datasetTrain": datasetTrain, "datasetEvaluation": datasetEvaluation, "dataset3DEvaluation": dataset3DEvaluation, "trainingCircularMasks": False} 
+trainingLesions = TrainingConditional(**args)
+
+
+# In[ ]:
+
+
+if config.mode == "train":
+    trainingLesions.train()
+
+
+# In[ ]:
+
+
+if config.mode == "eval":
+    pipeline = DDIMInpaintPipeline.from_pretrained(config.output_dir) 
+    trainingLesions.evaluate(pipeline)
+
+
+# In[ ]:
+
+
+
 
 
 # In[ ]:

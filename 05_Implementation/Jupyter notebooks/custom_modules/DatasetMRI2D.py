@@ -164,7 +164,7 @@ class DatasetMRI2D(DatasetMRI):
             sample_dict = {
                 "gt_image": t1n_slice.unsqueeze(0),
                 "segm": t1n_segm_slice, 
-                "mask": mask_slice.unsqueeze(0),
+                "mask": mask_slice.unsqueeze(0) if self.list_paths_masks else torch.empty(0),
                 "max_v": t1n_max_v,
                 "idx": int(idx),
                 "name": t1n_path.parent.stem,

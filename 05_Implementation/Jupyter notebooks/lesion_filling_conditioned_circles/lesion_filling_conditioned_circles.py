@@ -4,6 +4,13 @@
 # In[1]:
 
 
+import sys
+sys.path.insert(1, '../custom_modules')
+
+
+# In[2]:
+
+
 #create config
 from dataclasses import dataclass
 
@@ -13,20 +20,27 @@ class TrainingConfig:
     channels = 1 
     train_batch_size = 4
     eval_batch_size = 4
-    num_epochs = 80 #600
+    num_epochs = 90 #600
     gradient_accumulation_steps = 1
     learning_rate = 1e-4
     lr_warmup_steps = 100 #500
-    save_image_epochs = 20 #30
+    evaluate_epochs = 20 #30
+    evaluate_num_batches = 20 # one batch needs ~15s.  
+    evaluate_3D_epochs = 1000  # one 3D evaluation needs ~20min
     save_model_epochs = 60 # 300
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
-    output_dir = "lesion-filling-256"  # the model name locally and on the HF Hub
+    output_dir = "lesion-filling-256-cond-circle"  # the model name locally and on the HF Hub
     dataset_train_path = "./dataset_train/imgs"
     segm_train_path = "./dataset_train/segm"
+    masks_train_path = "./dataset_train/masks"
     dataset_eval_path = "./dataset_eval/imgs"
     segm_eval_path = "./dataset_eval/segm"
-    num_gpu=2
-    #uniform_dataset_path = "./uniform_dataset"
+    masks_eval_path = "./dataset_eval/masks" 
+    train_only_connected_masks=False # No Training with lesion masks
+    eval_only_connected_masks=False 
+    num_inference_steps=50
+    mode = "train" # train / eval
+    debug = False
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub
     #hub_model_id = "<your-username>/<my-awesome-model>"  # the name of the repository to create on the HF Hub
@@ -36,22 +50,35 @@ class TrainingConfig:
 config = TrainingConfig()
 
 
-# In[ ]:
+# In[3]:
+
+
+if config.debug:
+    config.num_inference_steps=5
+    config.train_batch_size = 1
+    config.eval_batch_size = 1 
+    config.train_only_connected_masks=False
+    config.eval_only_connected_masks=False
+    config.evaluate_num_batches=1
+    dataset_train_path = "./dataset_eval/imgs"
+    segm_train_path = "./dataset_eval/segm"
+    masks_train_path = "./dataset_eval/masks" 
+
+
+# In[4]:
 
 
 #setup huggingface accelerate
+import torch
+import numpy as np
 import accelerate
 accelerate.commands.config.default.write_basic_config(config.mixed_precision)
 
-#setup tensorboard
-import torch
-from torch.utils.tensorboard import SummaryWriter
-tb_summary = SummaryWriter(config.output_dir, purge_step=0)
+
+# In[5]:
 
 
-# In[ ]:
-
-
+"""
 #log at tensorboard
 tb_summary.add_scalar("image_size", config.image_size, 0)
 tb_summary.add_scalar("train_batch_size", config.train_batch_size, 0)
@@ -59,13 +86,15 @@ tb_summary.add_scalar("eval_batch_size", config.eval_batch_size, 0)
 tb_summary.add_scalar("num_epochs", config.num_epochs, 0)
 tb_summary.add_scalar("learning_rate", config.learning_rate, 0)
 tb_summary.add_scalar("lr_warmup_steps", config.lr_warmup_steps, 0)
-tb_summary.add_scalar("save_image_epochs", config.save_image_epochs, 0)
+tb_summary.add_scalar("evaluate_epochs", config.evaluate_epochs, 0)
 tb_summary.add_text("mixed_precision", config.mixed_precision, 0) 
+"""
 
 
-# In[ ]:
+# In[6]:
 
 
+"""
 # create dataset
 from torch.utils.data import Dataset
 from torch.nn import functional as F
@@ -75,7 +104,7 @@ import numpy as np
 from math import floor, ceil
 
 class DatasetMRI(Dataset):
-    """
+    
     Dataset for Training purposes. 
     Adapted implementation of BraTS 2023 Inpainting Challenge (https://github.com/BraTS-inpainting/2023_challenge).
     
@@ -91,11 +120,13 @@ class DatasetMRI(Dataset):
     Returns: 
         __getitem__: Returns a dictoinary containing:
             "gt_image": Padded and cropped version of t1n 2D slice
+            "segm": Segmentation of 2D slice
             "t1n_path": Path to the unpadded t1n file for this sample
-            "max_v": Maximal value of t1 image (used for normalization) 
-    """
+            "max_v": Maximal value of t1 image (used for normalization)
+            
+    
 
-    def __init__(self, root_dir_img: Path, root_dir_segm: Path, pad_shape=(256,256,256)):
+    def __init__(self, root_dir_img: Path, root_dir_segm: Path, pad_shape=(256,256,256), only_white_matter=False):
         #Initialize variables
         self.root_dir_img = root_dir_img
         self.root_dir_segm = root_dir_segm
@@ -103,7 +134,7 @@ class DatasetMRI(Dataset):
         self.list_paths_t1n = list(root_dir_img.rglob("*.nii.gz"))
         self.list_paths_segm = list(root_dir_segm.rglob("*.nii.gz"))
         #define offsets between first and last segmented slices and the slices to be used for training
-        bottom_offset=60 
+        bottom_offset=60
         top_offset=20
 
         #go through all 3D imgs
@@ -113,28 +144,44 @@ class DatasetMRI(Dataset):
             t1n_segm = nib.load(path)
             t1n_3d = t1n_segm.get_fdata()
 
-            #get first slice with segmented content and add offset
+            #transform segmentation
+            t1n_3d = np.transpose(t1n_3d)
+            t1n_3d = np.flip(t1n_3d, axis=1)
+
+            #get first slice with white matter or segmented content plus offset
             i=0
-            while(not t1n_3d[:,i,:].any()):
-                i+=1
-            bottom=i+bottom_offset
+            if(only_white_matter):
+                #while there is no white matter go to the next slide
+                while(not np.logical_or(t1n_3d[:,i,:]==41, t1n_3d[:,i,:]==2).any()):
+                    i += 1
+                bottom = i
+            else:
+                #while there is no segmented tissue go to the next slide
+                while(not t1n_3d[:,i,:].any()):
+                    i += 1
+                bottom = i + bottom_offset 
 
-            #get last slice with segmented content and add offset
+            #get last slice with white matter or segmented content minus offset
             i=t1n_3d.shape[1]-1
-            while(not t1n_3d[:,i,:].any()):
-                i-=1
-            top=i-top_offset
-
+            if(only_white_matter):
+                while(not np.logical_or(t1n_3d[:,i,:]==41, t1n_3d[:,i,:]==2).any()):
+                    i -= 1
+                top = i
+            else:
+                while(not t1n_3d[:,i,:].any()):
+                    i -= 1
+                top = i - top_offset 
+            
             #Add all slices between desired top and bottom slice to dataset
             for i in np.arange(top-bottom):
-                self.idx_to_2D_slice[idx]=(self.list_paths_t1n[j],bottom+i)
-                idx+=1 
+                self.idx_to_2D_slice[idx]=(self.list_paths_t1n[j], self.list_paths_segm[j],bottom+i, [])
+                idx+=1   
 
     def __len__(self): 
         return len(self.idx_to_2D_slice.keys()) 
 
     def preprocess(self, t1n: np.ndarray):
-        """
+        
         Transforms the images to a more unified format.
         Normalizes to -1,1. Pad and crop to bounding box.
         
@@ -147,7 +194,7 @@ class DatasetMRI(Dataset):
         Returns:
             t1n: The padded and cropped version of t1n.
             t1n_max_v: Maximal value of t1n image (used for normalization).
-        """
+        
 
         #Size assertions
         reference_shape = (256,256,160)
@@ -184,53 +231,150 @@ class DatasetMRI(Dataset):
 
     def __getitem__(self, idx):
         t1n_path = self.idx_to_2D_slice[idx][0]
-        slice_idx = self.idx_to_2D_slice[idx][1]
+        segm_path = self.idx_to_2D_slice[idx][1]
+        slice_idx = self.idx_to_2D_slice[idx][2]
+        masks = self.idx_to_2D_slice[idx][3]
+        
         t1n_img = nib.load(t1n_path)
         t1n = t1n_img.get_fdata()
+        t1n_segm = nib.load(segm_path)
+        t1n_segm_data = t1n_segm.get_fdata()
+        
+        t1n_segm_data = np.transpose(t1n_segm_data)
+        t1n_segm_data = np.flip(t1n_segm_data, axis=1)
         
         # preprocess data
-        t1n, t1n_max_v = self.preprocess(t1n) # around 0.2s on local machine
+        t1n, t1n_max_v = self.preprocess(t1n)
         
         # get 2D slice from 3D
         t1n_slice = t1n[:,slice_idx,:] 
+        t1n_segm_slice = t1n_segm_data[:,slice_idx,:]
         
         # Output data
         sample_dict = {
             "gt_image": t1n_slice.unsqueeze(0),
+            "segm": t1n_segm_slice,
             "t1n_path": str(t1n_path),  # path to the 3D t1n file for this sample.
-            "max_v": t1n_max_v,  # maximal t1n_voided value used for normalization 
+            "max_v": t1n_max_v,  # maximal t1n_voided value used for normalization
+            "masks": masks, #generated masks
         }
         return sample_dict 
+"""
 
 
-# In[ ]:
+# In[7]:
 
+
+"""
+def generate_white_matter_masks(segm, device, generator=None):
+    n=segm.shape[0]
+
+    center = torch.empty(size=n)
+    for i in torch.arange(n):
+        #get indices with white matter
+        wm_idx = torch.nonzero(segm[i])
+        #take random white matter idx as center
+        center[i] = torch.randint(low=0, high=wm_idx.shape[0], size=1, device=device, generator=generator)
+
+    low=3   
+    high=40
+    radius=torch.rand(n, device=device, generator=generator)*(high-low)+low # get radius between 3 and 40 from uniform distribution 
+
+
+    #samplen eines radius und schauen ob 70% white matter ist
+    #falls nicht, dann radius um die hälfte verkleinern
+    #wiederholen bis mindestgrösse erreicht und falls wieder nicht, dann neuer radius samplen
+    
+    
+    
+
+    
+    
+    
+
+    #Test case
+    #center=torch.tensor([[0,255],[0,255]]) 
+    #radius=torch.tensor([2,2])
+    
+    Y, X = [torch.arange(config.image_size, device=device)[:,None],torch.arange(config.image_size, device=device)[None,:]] # gives two vectors, each containing the pixel locations. There's a column vector for the column indices and a row vector for the row indices.
+    dist_from_center = torch.sqrt((X.T - center[:,0])[None,:,:]**2 + (Y-center[:,1])[:,None,:]**2) # creates matrix with euclidean distance to center
+    dist_from_center = dist_from_center.permute(2,0,1) 
+
+    #Test case
+    #print(dist_from_center[0,0,0]) #=255
+    #print(dist_from_center[0,0,255]) #=360.624
+    #print(dist_from_center[0,255,0]) #=0
+    #print(dist_from_center[0,255,255]) #=255
+    #print(dist_from_center[0,127,127]) #=180.313 
+    
+    masks = dist_from_center > radius[:,None,None] # creates mask for pixels which are outside the radius. 
+    masks = masks[:,None,:,:].int() 
+    return masks
+"""
+
+
+# In[8]:
+
+
+from DatasetMRI2D import DatasetMRI2D
+from DatasetMRI3D import DatasetMRI3D
+from pathlib import Path
 
 #create dataset
-datasetTrain = DatasetMRI(Path(config.dataset_train_path), Path(config.segm_train_path), pad_shape=(256, 256, 256))
+datasetTrain = DatasetMRI2D(Path(config.dataset_train_path), Path(config.segm_train_path), only_connected_masks=config.train_only_connected_masks)
+datasetEvaluation = DatasetMRI2D(Path(config.dataset_eval_path), Path(config.segm_eval_path), Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks)
+dataset3DEvaluation = DatasetMRI3D(Path(config.dataset_eval_path), Path(config.segm_eval_path), Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks)
+
+"""
+#create dataset
+datasetTrain = DatasetMRI(Path(config.dataset_train_path), Path(config.segm_train_path), pad_shape=(256, 256, 256), only_white_matter=True)
 datasetEvaluation = DatasetMRI(Path(config.dataset_eval_path), Path(config.segm_eval_path), pad_shape=(256, 256, 256))
 
 print(f"Dataset size: {len(datasetTrain)}")
 print(f"\tImage shape: {datasetTrain[0]['gt_image'].shape}")
 print(f"Training Data: {list(datasetTrain[0].keys())}") 
+"""
+
+
+# ### Visualize dataset
+
+# In[9]:
+
+
+import matplotlib.pyplot as plt
+fig, axis = plt.subplots(1,2,figsize=(16,4))
+idx=80
+axis[0].imshow((datasetTrain[idx]["gt_image"].squeeze()+1)/2)
+axis[1].imshow(np.logical_or(datasetTrain[idx]["segm"].squeeze()==41, datasetTrain[idx]["segm"].squeeze()==2))
+fig.show 
 
 
 # In[ ]:
 
 
-# plot random image
-import matplotlib.pyplot as plt
+# Get 6 random sample
+random_indices = np.random.randint(0, len(datasetTrain) - 1, size=(6)) 
 
-# Get 8 random sample
-random_indices = np.random.randint(0, len(datasetTrain) - 1, size=(8)) 
-
-# Plot: t1n
-fig, axis = plt.subplots(2,4,figsize=(16,4))
+# Plot: t1n segmentations
+fig, axis = plt.subplots(2,3,figsize=(16,4))
 for i, idx in enumerate(random_indices):
-    axis[i//4,i%4].imshow((datasetTrain[idx]["gt_image"].squeeze()+1)/2)
-    axis[i//4,i%4].set_axis_off()
+    axis[i//3,i%3].imshow(np.logical_or(datasetTrain[idx]["segm"].squeeze()==41, datasetTrain[idx]["segm"].squeeze()==2))
+    axis[i//3,i%3].set_axis_off()
 fig.show()
 
+
+# In[ ]:
+
+
+# Plot: t1n images
+fig, axis = plt.subplots(2,3,figsize=(16,4))
+for i, idx in enumerate(random_indices):
+    axis[i//3,i%3].imshow((datasetTrain[idx]["gt_image"].squeeze()+1)/2)
+    axis[i//3,i%3].set_axis_off()
+fig.show()
+
+
+# ### Playground for random circles
 
 # In[ ]:
 
@@ -240,7 +384,7 @@ centers=[]
 for _ in np.arange(100):
     centers.append(torch.normal(torch.tensor([127.,127.]),torch.tensor(30.)))
 
-plt.imshow((datasetTrain[500]["gt_image"].squeeze()+1)/2) 
+plt.imshow((datasetTrain[70]["gt_image"].squeeze()+1)/2) 
 for center in centers:
     plt.scatter(center[0], center[1])
 
@@ -250,9 +394,9 @@ for center in centers:
 
 example=torch.zeros((10,256,256)).shape
 
-#create circular mask with random center around the center point of the pictures and a radius between 3 and 50 pixels
+#create circular mask with random center around the center point of the pictures and a radius between 3 and 40 pixels
 center=np.random.normal([127,127],30, size=(example[0],2))
-radius=np.random.uniform(low=3,high=50, size=(example[0]))
+radius=np.random.uniform(low=3,high=40, size=(example[0]))
 
 Y, X = np.ogrid[:256, :256] # gives two vectors, each containing the pixel locations. There's a column vector for the column indices and a row vector for the row indices.
 dist_from_center = np.sqrt((X.T - center[:,0])[None,:,:]**2 + (Y-center[:,1])[:,None,:]**2) # creates matrix with euclidean distance to center
@@ -260,7 +404,7 @@ dist_from_center = np.sqrt((X.T - center[:,0])[None,:,:]**2 + (Y-center[:,1])[:,
 mask = dist_from_center <= radius # creates mask for pixels which are inside the radius
 mask = 1-mask
 
-plt.imshow(((datasetTrain[500]["gt_image"].squeeze()+1)/2)*mask[:,:,4]) 
+plt.imshow(((datasetTrain[70]["gt_image"].squeeze()+1)/2)*mask[:,:,4]) 
 
 
 
@@ -288,14 +432,18 @@ plt.show()
 """
 
 
+# ### Prepare Training
+
 # In[ ]:
 
 
+"""
 from torch.utils.data import DataLoader
 
 # create dataloader function, which is executed inside the training loop (necessary because of huggingface accelerate)
-def get_dataloader(dataset, batch_size):
-    return DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+def get_dataloader(dataset, batch_size, shuffle):
+    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=4)
+"""
 
 
 # In[ ]:
@@ -328,7 +476,7 @@ model = UNet2DModel(
     ),
 )
 
-tb_summary.add_text("model", "UNet2DModel", 0) 
+config.model = "UNet2DModel"
 
 
 # In[ ]:
@@ -340,16 +488,17 @@ from PIL import Image
 from diffusers import DDIMScheduler
 
 noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
-sample_image = datasetTrain[0]['gt_image'].unsqueeze(0)
-noise = torch.randn(sample_image.shape)
-timesteps = torch.LongTensor([50])
-noisy_image = noise_scheduler.add_noise(sample_image, noise, timesteps)
+#sample_image = datasetTrain[0]['gt_image'].unsqueeze(0)
+#noise = torch.randn(sample_image.shape)
+#timesteps = torch.LongTensor([50])
+#noisy_image = noise_scheduler.add_noise(sample_image, noise, timesteps)
 
-tb_summary.add_text("noise_scheduler", "DDIMScheduler(num_train_timesteps=1000)", 0) 
+#tb_summary.add_text("noise_scheduler", "DDIMScheduler(num_train_timesteps=1000)", 0) 
 
 #Image.fromarray(((noisy_image.permute(0, 2, 3, 1) + 1.0) * 127.5).type(torch.uint8).numpy()[0])
 
 
+config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
 
 
 # In[ ]:
@@ -366,13 +515,13 @@ lr_scheduler = get_cosine_schedule_with_warmup(
     num_training_steps=(math.ceil(len(datasetTrain)/config.train_batch_size) * config.num_epochs), # num_iterations per epoch * num_epochs
 )
 
-tb_summary.add_text("lr_scheduler", "cosine_schedule_with_warmup", 0) 
+config.lr_scheduler = "cosine_schedule_with_warmup"
 
 
 # In[ ]:
 
 
-from typing import List, Optional, Tuple, Union
+"""from typing import List, Optional, Tuple, Union
 
 from diffusers import DiffusionPipeline, DDIMScheduler, ImagePipelineOutput
 from diffusers.utils.torch_utils import randn_tensor
@@ -380,7 +529,7 @@ from diffusers.utils.torch_utils import randn_tensor
 
 
 class DDIMInpaintPipeline(DiffusionPipeline):
-    r"""
+    r
     Pipeline for image inpainting.
 
     This model inherits from [`DiffusionPipeline`]. Check the superclass documentation for the generic methods
@@ -392,7 +541,7 @@ class DDIMInpaintPipeline(DiffusionPipeline):
         scheduler ([`SchedulerMixin`]):
             A scheduler to be used in combination with `unet` to denoise the encoded image. Can be one of
             [`DDPMScheduler`], or [`DDIMScheduler`].
-    """
+    
 
     model_cpu_offload_seq = "unet"
 
@@ -417,7 +566,7 @@ class DDIMInpaintPipeline(DiffusionPipeline):
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
     ) -> Union[ImagePipelineOutput, Tuple]:
-        r"""
+        r
         The call function to the pipeline for generation.
 
         Args:
@@ -449,7 +598,7 @@ class DDIMInpaintPipeline(DiffusionPipeline):
             [`~pipelines.ImagePipelineOutput`] or `tuple`:
                 If `return_dict` is `True`, [`~pipelines.ImagePipelineOutput`] is returned, otherwise a `tuple` is
                 returned where the first element is a list with the generated images
-        """
+        
 
         # Sample gaussian noise to begin loop
         if isinstance(self.unet.config.sample_size, int):
@@ -499,15 +648,17 @@ class DDIMInpaintPipeline(DiffusionPipeline):
             return (image,)
 
         return ImagePipelineOutput(images=image)
+"""
 
 
 # In[ ]:
 
 
+"""
 def generate_masks(n, device, generator=None):
     #create circular mask with random center around the center point of the pictures and a radius between 3 and 50 pixels
     center=torch.normal(mean=config.image_size/2, std=30, size=(n,2), generator=generator, device=device) # 30 is chosen by inspection
-    low=3   
+    low=3
     high=50
     radius=torch.rand(n, device=device, generator=generator)*(high-low)+low # get radius between 3 and 50 from uniform distribution 
 
@@ -528,13 +679,13 @@ def generate_masks(n, device, generator=None):
     
     masks = dist_from_center > radius[:,None,None] # creates mask for pixels which are outside the radius. 
     masks = masks[:,None,:,:].int() 
-    return masks
+    return masks"""
 
 
 # In[ ]:
 
 
-#setup evaluation
+"""#setup evaluation
 from diffusers.utils import make_image_grid
 from torchvision.transforms.functional import to_pil_image
 import os
@@ -543,40 +694,38 @@ def evaluate(config, epoch, pipeline, eval_dataloader):
     batch = next(iter(eval_dataloader)) #TODO: Anpassen, falls grösseres evaluation set. Evt. anpassen für accelerate.
     clean_images = batch["gt_image"]
 
-    generator = torch.cuda.manual_seed(config.seed) if torch.cuda.is_available() else torch.manual_seed(config.seed)
-
+    generator = torch.cuda.manual_seed_all(config.seed)
     masks = generate_masks(n=clean_images.shape[0], generator=generator, device=clean_images.device)
-
-    voided_images = clean_images*masks 
+    voided_images = clean_images*masks
 
     images = pipeline(
         voided_images,
         masks,
         batch_size=config.eval_batch_size,
-        generator=torch.manual_seed(config.seed),
+        generator=torch.manual_seed_all(config.seed),
     ).images
 
     # Make a grid out of the images
-    image_grid = make_image_grid(images, rows=2, cols=2)
+    image_grid = make_image_grid(images, rows=int(config.eval_batch_size**0.5), cols=int(config.eval_batch_size**0.5))
 
     # Save the images
     test_dir = os.path.join(config.output_dir, "samples")
     os.makedirs(test_dir, exist_ok=True)
     image_grid.save(f"{test_dir}/inpainted_image_{epoch:04d}.png")
     
-    pil_voided_images = [to_pil_image(x) for x in voided_images]
-    voided_image_grid = make_image_grid(pil_voided_images, rows=2, cols=2)
+    pil_voided_images = [to_pil_image((x+1)/2) for x in voided_images]
+    voided_image_grid = make_image_grid(pil_voided_images, rows=int(config.eval_batch_size**0.5), cols=int(config.eval_batch_size**0.5))
     voided_image_grid.save(f"{test_dir}/voided_image_{epoch:04d}.png")
     
     print("image saved")
 
-#TODO: As soon as I evaluate metrics I need to adjust the evaluate function to accelerate
+#TODO: As soon as I evaluate metrics I need to adjust the evaluate function to accelerate"""
 
 
 # In[ ]:
 
 
-#from accelerate import Accelerator
+"""#from accelerate import Accelerator
 from accelerate import Accelerator
 from huggingface_hub import create_repo, upload_folder
 from tqdm.auto import tqdm
@@ -601,8 +750,8 @@ def train_loop(config, model, noise_scheduler, optimizer, lr_scheduler):
             os.makedirs(config.output_dir, exist_ok=True) 
         accelerator.init_trackers("train_example")
 
-    train_dataloader = get_dataloader(dataset = datasetTrain, batch_size = config.train_batch_size) 
-    eval_dataloader = get_dataloader(dataset = datasetEvaluation, batch_size = config.eval_batch_size) 
+    train_dataloader = get_dataloader(dataset = datasetTrain, batch_size = config.train_batch_size, shuffle=True) 
+    eval_dataloader = get_dataloader(dataset = datasetEvaluation, batch_size = config.eval_batch_size, shuffle=False) 
 
     model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
@@ -613,10 +762,10 @@ def train_loop(config, model, noise_scheduler, optimizer, lr_scheduler):
     global_step = 0
 
     #eval test case
-    epoch=0
-    model.eval()
-    pipeline = DDIMInpaintPipeline(unet=accelerator.unwrap_model(model), scheduler=noise_scheduler)  
-    evaluate(config, epoch, pipeline, eval_dataloader)
+    #epoch=0
+    #model.eval()
+    #pipeline = DDIMInpaintPipeline(unet=accelerator.unwrap_model(model), scheduler=noise_scheduler)  
+    #evaluate(config, epoch, pipeline, eval_dataloader)
     
     
     # Train model
@@ -628,6 +777,7 @@ def train_loop(config, model, noise_scheduler, optimizer, lr_scheduler):
         for step, batch in enumerate(train_dataloader): 
             
             clean_images = batch["gt_image"]
+            segmentations = batch["segm"]
             
             # Sample noise to add to the images
             noise = torch.randn(clean_images.shape, device=clean_images.device)
@@ -688,31 +838,69 @@ def train_loop(config, model, noise_scheduler, optimizer, lr_scheduler):
             model.eval()
             pipeline = DDIMInpaintPipeline(unet=accelerator.unwrap_model(model), scheduler=noise_scheduler) 
     
-            if (epoch) % config.save_image_epochs == 0 or epoch == config.num_epochs - 1:
+            if (epoch) % config.evaluate_epochs == 0 or epoch == config.num_epochs - 1:
                 evaluate(config, epoch, pipeline, eval_dataloader)
     
             if (epoch) % config.save_model_epochs == 0 or epoch == config.num_epochs - 1: 
                 pipeline.save_pretrained(config.output_dir)
 
-tb_summary.add_text("inference_pipeline", "DDIMPipeline", 0) 
+tb_summary.add_text("inference_pipeline", "DDIMPipeline", 0) """
 
 
 # In[ ]:
 
 
-from accelerate import notebook_launcher
+"""from accelerate import notebook_launcher
 
 # If run from a jupyter notebook then uncomment the two lines and remove last line
 args = (config, model, noise_scheduler, optimizer, lr_scheduler)
 #notebook_launcher(train_loop, args, num_processes=config.num_gpu)
 #notebook_launcher(train_loop, args, num_processes=1)
 
-train_loop(config, model, noise_scheduler, optimizer, lr_scheduler)
+train_loop(config, model, noise_scheduler, optimizer, lr_scheduler)"""
 
 
 # In[ ]:
 
 
+from TrainingConditional import TrainingConditional
+from DDIMInpaintPipeline import DDIMInpaintPipeline
+
+config.conditional_data = "Circles"
+
+args = {"config": config, "model": model, "noise_scheduler": noise_scheduler, "optimizer": optimizer, "lr_scheduler": lr_scheduler, "datasetTrain": datasetTrain, "datasetEvaluation": datasetEvaluation, "dataset3DEvaluation": dataset3DEvaluation, "trainingCircularMasks": True} 
+trainingCircles = TrainingConditional(**args)
+
+
+# In[ ]:
+
+
+if config.mode == "train":
+    trainingCircles.train()
+
+
+# In[ ]:
+
+
+if config.mode == "eval":
+    pipeline = DDIMInpaintPipeline.from_pretrained(config.output_dir) 
+    trainingCircles.evaluate(pipeline)
+
+
+# In[ ]:
+
+
+print("Finished Training")
+
+
+# In[10]:
+
+
 #create python script for ubelix
 get_ipython().system('jupyter nbconvert --to script "lesion_filling_conditioned_circles.ipynb"')
+filename="lesion_filling_conditioned_circles.py"
 
+# delete this cell from python file
+lines = []
+with open(filename, 'r') as fp:
+    lines = fp.readlines()

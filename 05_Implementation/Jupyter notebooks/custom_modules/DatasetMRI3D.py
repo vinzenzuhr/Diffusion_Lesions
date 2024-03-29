@@ -120,7 +120,7 @@ class DatasetMRI3D(DatasetMRI):
             sample_dict = {
                 "gt_image": t1n_img.unsqueeze(0), 
                 "segm": t1n_segm, 
-                "mask": mask.unsqueeze(0), 
+                "mask": mask.unsqueeze(0) if self.list_paths_masks else torch.empty(0), 
                 "max_v": t1n_max_v, 
                 "idx": int(idx), 
                 "name": t1n_path.parent.stem 

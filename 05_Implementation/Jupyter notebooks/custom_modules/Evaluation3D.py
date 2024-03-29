@@ -5,13 +5,16 @@ import os
 import torch
 
 class Evaluation3D:
-    def __init__(self, config, pipeline, dataloader, tb_summary):
+    def __init__(self, config, pipeline, dataloader):
         self.config = config
         self.pipeline = pipeline
         self.dataloader = dataloader
-        self.tb_summary = tb_summary
+
+        # create folder for segmentation algorithm afterwards
+        segmentation_dir = os.path.join(config.output_dir, "segmentations_3D")
+        os.makedirs(segmentation_dir, exist_ok=True)
     
-    def evaluate(self, epoch):
+    def evaluate(self, epoch, parameters={}):
         for batch in self.dataloader:
             # go through sample in batch
             for sample_idx in torch.arange(batch["gt_image"].shape[0]):
@@ -39,16 +42,14 @@ class Evaluation3D:
                 for chunk in chunks:
                     chunk_voided_images = chunk[0]
                     chunk_masks = chunk[1]
-
-                    size = chunk_masks.shape[0]
                     
                     images = self.pipeline(
                         chunk_voided_images,
                         chunk_masks,
-                        batch_size=size,
                         generator=torch.cuda.manual_seed_all(self.config.seed),
                         output_type=np.array,
-                        num_inference_steps = self.config.num_inference_steps
+                        num_inference_steps = self.config.num_inference_steps,
+                        **parameters
                     ).images
                     inpainted_images.append(torch.from_numpy(images))
                 inpainted_images = torch.cat(inpainted_images, dim=0)
@@ -59,7 +60,7 @@ class Evaluation3D:
                 clean_images[:, :, slice_indices, :] = inpainted_images
             
                 #postprocess and save image as nifti file
-                clean_images = DatasetMRI.postprocess(clean_images, max_v)
-                save_dir = os.path.join(self.config.output_dir, f"samples_3D/{name}_{epoch:04d}")
+                clean_images = DatasetMRI.postprocess(clean_images, max_v) 
+                save_dir = os.path.join(self.config.output_dir, f"samples_3D/{name}") 
                 os.makedirs(save_dir, exist_ok=True)
                 DatasetMRI.save(clean_images, f"{save_dir}/T1.nii.gz", **self.dataloader.dataset.get_metadata(int(idx)))

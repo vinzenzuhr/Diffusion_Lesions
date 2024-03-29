@@ -11,17 +11,18 @@ from torcheval.metrics import PeakSignalNoiseRatio
 from torchvision.transforms.functional import to_pil_image
 
 class Evaluation2D:
-    def __init__(self, config, pipeline, dataloader, tb_summary):
+    def __init__(self, config, pipeline, dataloader, tb_summary, accelerator):
         self.config = config
         self.pipeline = pipeline
         self.dataloader = dataloader
         self.tb_summary = tb_summary
+        self.accelerator = accelerator
 
     def _calc_metrics(self, image1, image2):
         batch_size = image1.shape[0]
 
         # PSNR metric
-        metric = PeakSignalNoiseRatio(device=image1.device)
+        metric = PeakSignalNoiseRatio(device=image1.device, data_range = 2.0)
         metric.update(image1, image2)
         PSNR = metric.compute().item()
 
@@ -72,11 +73,11 @@ class Evaluation2D:
             image_grid.save(f"{path}/{title}_{epoch:04d}.png")
         print("image saved")   
 
-    def evaluate(self, epoch, global_step):
+    def evaluate(self, epoch, global_step, parameters={}):
         #initialize metrics
-        PSNR_mean = 0
-        SSIM_mean = 0  
-        MSE_mean = 0
+        PSNR_means = []
+        SSIM_means = []
+        MSE_means = []
 
         self._reset_seed(self.config.seed)
         for n_iter, batch in enumerate(self.dataloader): 
@@ -92,32 +93,37 @@ class Evaluation2D:
             inpainted_images = self.pipeline(
                 voided_images,
                 masks,
-                batch_size=masks.shape[0],
                 generator=torch.cuda.manual_seed_all(self.config.seed),
                 output_type=np.array,
-                num_inference_steps = self.config.num_inference_steps
+                num_inference_steps = self.config.num_inference_steps,
+                **parameters
             ).images
             inpainted_images = torch.from_numpy(inpainted_images).to(clean_images.device)
             
+            print("inapint: ", inpainted_images.max(), inpainted_images.min())
+            print("clean: ", clean_images.max(), clean_images.min())
+
             # transform from B x H x W x C to B x C x H x W 
             inpainted_images = torch.permute(inpainted_images, (0, 3, 1, 2))
 
-            PSNR, SSIM, MSE = self._calc_metrics(clean_images, inpainted_images)
-            PSNR_mean += PSNR
-            SSIM_mean += SSIM 
-            MSE_mean += MSE
+            all_clean_images = self.accelerator.gather_for_metrics(clean_images)
+            all_inpainted_images = self.accelerator.gather_for_metrics(inpainted_images)
+
+            PSNR, SSIM, MSE = self._calc_metrics((all_clean_images+1)/2, all_inpainted_images)
+            PSNR_means.append(PSNR)
+            SSIM_means.append(SSIM)
+            MSE_means.append(MSE)
             
         # calculcate mean of metrics
-        PSNR_mean /= len(self.dataloader)
-        SSIM_mean /= len(self.dataloader)
-        MSE_mean /= len(self.dataloader)
+        PSNR_mean = sum(PSNR_means) / len(PSNR_means)
+        SSIM_mean = sum(SSIM_means) / len(SSIM_means)
+        MSE_mean = sum(MSE_means) / len(MSE_means)  
 
-        
+        if self.accelerator.is_main_process:
 
-        self._log_metrics(self.tb_summary, global_step, PSNR_mean, SSIM_mean, MSE_mean)
+            self._log_metrics(self.tb_summary, global_step, PSNR_mean, SSIM_mean, MSE_mean)
 
-        # save last batch as sample images
-        if (epoch) % self.config.evaluate_save_img_epochs == 0 or epoch == self.config.num_epochs - 1:
+            # save last batch as sample images 
             # change range from [-1,1] to [0,1]
             voided_images = (voided_images+1)/2
             clean_images = (clean_images+1)/2

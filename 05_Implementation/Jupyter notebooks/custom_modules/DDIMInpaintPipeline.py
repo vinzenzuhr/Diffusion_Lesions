@@ -33,7 +33,6 @@ class DDIMInpaintPipeline(DiffusionPipeline):
         self,
         voided_imgs: torch.tensor,
         masks: torch.tensor,
-        batch_size: int = 1,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         eta: float = 0.0,
         num_inference_steps: int = 50,
@@ -49,8 +48,6 @@ class DDIMInpaintPipeline(DiffusionPipeline):
                 Images (1 channel) which should be inpainted.
             masks ('torch.tensor'): 
                 Binary masks which includes the area to inpaint.
-            batch_size (`int`, *optional*, defaults to 1):
-                The number of images to generate.
             generator (`torch.Generator`, *optional*):
                 A [`torch.Generator`](https://pytorch.org/docs/stable/generated/torch.Generator.html) to make
                 generation deterministic.
@@ -74,6 +71,8 @@ class DDIMInpaintPipeline(DiffusionPipeline):
                 If `return_dict` is `True`, [`~pipelines.ImagePipelineOutput`] is returned, otherwise a `tuple` is
                 returned where the first element is a list with the generated images
         """
+
+        batch_size = voided_imgs.shape[0]
 
         # Sample gaussian noise to begin loop
         if isinstance(self.unet.config.sample_size, int):
