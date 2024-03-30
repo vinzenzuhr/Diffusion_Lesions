@@ -109,7 +109,7 @@ class Evaluation2D:
             all_clean_images = self.accelerator.gather_for_metrics(clean_images)
             all_inpainted_images = self.accelerator.gather_for_metrics(inpainted_images)
 
-            PSNR, SSIM, MSE = self._calc_metrics((all_clean_images+1)/2, all_inpainted_images)
+            PSNR, SSIM, MSE = self._calc_metrics((all_clean_images), all_inpainted_images)
             PSNR_means.append(PSNR)
             SSIM_means.append(SSIM)
             MSE_means.append(MSE)
@@ -125,6 +125,7 @@ class Evaluation2D:
 
             # save last batch as sample images 
             # change range from [-1,1] to [0,1]
+            inpainted_images = (inpainted_images+1)/2
             voided_images = (voided_images+1)/2
             clean_images = (clean_images+1)/2
             # change binary image from 0,1 to 0,255

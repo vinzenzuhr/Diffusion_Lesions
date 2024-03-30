@@ -40,7 +40,7 @@ class TrainingConfig:
     eval_only_connected_masks=False 
     num_inference_steps=50
     mode = "train" # train / eval
-    debug = False
+    debug = True
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub
     #hub_model_id = "<your-username>/<my-awesome-model>"  # the name of the repository to create on the HF Hub
@@ -892,15 +892,3 @@ if config.mode == "eval":
 
 print("Finished Training")
 
-
-# In[10]:
-
-
-#create python script for ubelix
-get_ipython().system('jupyter nbconvert --to script "lesion_filling_conditioned_circles.ipynb"')
-filename="lesion_filling_conditioned_circles.py"
-
-# delete this cell from python file
-lines = []
-with open(filename, 'r') as fp:
-    lines = fp.readlines()

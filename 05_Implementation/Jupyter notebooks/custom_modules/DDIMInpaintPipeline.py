@@ -113,9 +113,12 @@ class DDIMInpaintPipeline(DiffusionPipeline):
             #3. Concatenate image with voided images and masks
             input=torch.cat((image, voided_imgs, masks), dim=1)
 
-        image = (image / 2 + 0.5).clamp(0, 1)
+        print(image.max(), image.min())
+
+        
         image = image.cpu().permute(0, 2, 3, 1).numpy()
         if output_type == "pil":
+            image = (image / 2 + 0.5).clamp(0, 1)
             image = self.numpy_to_pil(image)
 
         if not return_dict:

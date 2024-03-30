@@ -3,8 +3,9 @@ from Evaluation2D import Evaluation2D
 from Evaluation3D import Evaluation3D
 
 # import other modules
-from diffusers import RePaintPipeline, RePaintScheduler  
+from diffusers import RePaintScheduler  
 from Training import Training 
+from pipeline_repaint import RePaintPipeline
 
 class TrainingUnconditional(Training):
     def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, deactivate3Devaluation = True):
