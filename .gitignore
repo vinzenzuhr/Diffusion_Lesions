@@ -7,3 +7,4 @@
 *.npy
 __pycache__/
 06_Trainings/
+03_Literatur/**/*.docx
