@@ -1,20 +1,31 @@
+from Evaluation import Evaluation
 from DatasetMRI import DatasetMRI
 import math
 import numpy as np
 import os
 import torch
 
-class Evaluation3D:
-    def __init__(self, config, pipeline, dataloader):
+class Evaluation3D(Evaluation):
+    def __init__(self, config, pipeline, dataloader, tb_summary, accelerator):
         self.config = config
         self.pipeline = pipeline
         self.dataloader = dataloader
+        self.tb_summary = tb_summary
+        self.accelerator = accelerator
 
         # create folder for segmentation algorithm afterwards
         segmentation_dir = os.path.join(config.output_dir, "segmentations_3D")
-        os.makedirs(segmentation_dir, exist_ok=True)
+        os.makedirs(segmentation_dir, exist_ok=True) 
     
-    def evaluate(self, epoch, parameters={}):
+    def evaluate(self, global_step, parameters={}):
+        #initialize metrics 
+        metrics = dict()
+        metric_list = ["ssim_full", "ssim_out", "ssim_in", "mse_full", "mse_out", "mse_in", "psnr_full", "psnr_out", "psnr_in"] 
+        for metric in metric_list:
+            metrics[metric] = 0
+        num_iterations = 0
+
+        print("Start 3D evaluation")
         for batch in self.dataloader:
             # go through sample in batch
             for sample_idx in torch.arange(batch["gt_image"].shape[0]):
@@ -23,12 +34,12 @@ class Evaluation3D:
                 max_v = batch["max_v"][sample_idx]
                 idx = batch["idx"][sample_idx]
                 name = batch["name"][sample_idx]
-                voided_images = clean_images*masks
+                voided_images = clean_images*(1-masks)
             
                 #get slices which have to be inpainted
                 slice_indices = []
                 for slice_idx in torch.arange(voided_images.shape[2]):
-                    if (1-masks[:, :, slice_idx, :]).any():
+                    if (masks[:, :, slice_idx, :]).any():
                         slice_indices.append(slice_idx.unsqueeze(0)) 
                 slice_indices = torch.cat(slice_indices, 0)
             
@@ -57,10 +68,29 @@ class Evaluation3D:
                 inpainted_images = inpainted_images.to(clean_images.device)
             
                 #overwrite the original 3D image with the inpainted 2D slices
-                clean_images[:, :, slice_indices, :] = inpainted_images
+                final_3d_images = torch.clone(clean_images.detach())
+                final_3d_images[:, :, slice_indices, :] = inpainted_images
+
+                #calculate metrics
+                all_clean_images = self.accelerator.gather_for_metrics(clean_images)
+                all_3d_images = self.accelerator.gather_for_metrics(final_3d_images) 
+                all_masks = self.accelerator.gather_for_metrics(masks)
+                new_metrics = self._calc_metrics(all_clean_images, all_3d_images, all_masks)
+
+                for key, value in new_metrics.items(): 
+                    metrics[key] += value 
+                num_iterations += 1
             
                 #postprocess and save image as nifti file
-                clean_images = DatasetMRI.postprocess(clean_images, max_v) 
+                final_3d_images = DatasetMRI.postprocess(final_3d_images, max_v)  
                 save_dir = os.path.join(self.config.output_dir, f"samples_3D/{name}") 
                 os.makedirs(save_dir, exist_ok=True)
-                DatasetMRI.save(clean_images, f"{save_dir}/T1.nii.gz", **self.dataloader.dataset.get_metadata(int(idx)))
+                DatasetMRI.save(final_3d_images, f"{save_dir}/T1.nii.gz", **self.dataloader.dataset.get_metadata(int(idx)))
+        
+        for key, value in metrics.items():
+            metrics[key] /= num_iterations
+
+        if self.accelerator.is_main_process: 
+            self._log_metrics(self.tb_summary, global_step, metrics)
+
+        print("3D evaluation finished")
