@@ -112,7 +112,7 @@ class RePaintPipeline(DiffusionPipeline):
             image (`torch.FloatTensor` or `PIL.Image.Image`):
                 The original image to inpaint on.
             mask_image (`torch.FloatTensor` or `PIL.Image.Image`):
-                The mask_image where 0.0 define which part of the original image to inpaint.
+                The mask_image where 1.0 define which part of the original image to inpaint.
             num_inference_steps (`int`, *optional*, defaults to 1000):
                 The number of denoising steps. More denoising steps usually lead to a higher quality image at the
                 expense of slower inference.
@@ -178,6 +178,9 @@ class RePaintPipeline(DiffusionPipeline):
                 If `return_dict` is `True`, [`~pipelines.ImagePipelineOutput`] is returned, otherwise a `tuple` is
                 returned where the first element is a list with the generated images.
         """
+
+        #invert mask to fit original implementation
+        mask_image = 1-mask_image
 
         original_image = image
 
