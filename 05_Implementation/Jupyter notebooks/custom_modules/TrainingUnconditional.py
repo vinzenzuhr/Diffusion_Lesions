@@ -12,10 +12,10 @@ class TrainingUnconditional(Training):
         super().__init__(config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation)
         self.deactivate3Devaluation = deactivate3Devaluation
 
-    def _get_training_input(self, batch):
+    def _get_training_input(self, batch, generator=None):
         clean_images = batch["gt_image"]
 
-        noisy_images, noise, timesteps = self._get_noisy_images(clean_images)
+        noisy_images, noise, timesteps = self._get_noisy_images(clean_images, generator)
         
         return noisy_images, noise, timesteps
 
@@ -34,9 +34,9 @@ class TrainingUnconditional(Training):
                 pipeline, 
                 self.d2_eval_dataloader, 
                 None if not self.accelerator.is_main_process else self.tb_summary, 
-                self.accelerator)
+                self.accelerator,
+                self)
             eval.evaluate(
-                self.epoch, 
                 self.global_step, 
                 parameters = {
                     "jump_length": self.config.jump_length,
@@ -49,9 +49,11 @@ class TrainingUnconditional(Training):
             eval = Evaluation3D(
                 self.config, 
                 pipeline, 
-                self.d3_eval_dataloader)  
+                self.d3_eval_dataloader, 
+                None if not self.accelerator.is_main_process else self.tb_summary, 
+                self.accelerator)  
             eval.evaluate(
-                self.epoch, 
+                self.global_step,
                 parameters = {
                     "jump_length": self.config.jump_length,
                     "jump_n_sample": self.config.jump_n_sample,

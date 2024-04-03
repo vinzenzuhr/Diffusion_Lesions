@@ -12,19 +12,19 @@ class TrainingConditional(Training):
         super().__init__(config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation)
         self.trainingCircularMasks = trainingCircularMasks
 
-    def _get_training_input(self, batch):
+    def _get_training_input(self, batch, generator=None):
         clean_images = batch["gt_image"]
 
         if self.trainingCircularMasks:
-            masks = self._get_random_masks(clean_images.shape[0])
+            masks = self._get_random_masks(clean_images.shape[0], generator)
             masks = masks.to(clean_images.device)
         else:
             masks = batch["mask"]
 
-        noisy_images, noise, timesteps = self._get_noisy_images(clean_images)
+        noisy_images, noise, timesteps = self._get_noisy_images(clean_images, generator)
 
         #create voided img
-        voided_images = clean_images*masks
+        voided_images = clean_images*(1-masks)
 
         # concatenate noisy_images, voided_images and mask
         input=torch.cat((noisy_images, voided_images, masks), dim=1)
@@ -41,13 +41,13 @@ class TrainingConditional(Training):
         
         # Evaluate 2D images
         if (self.epoch) % self.config.evaluate_epochs == 0 or self.epoch == self.config.num_epochs - 1: 
-            eval = Evaluation2D(self.config, pipeline, self.d2_eval_dataloader, None if not self.accelerator.is_main_process else self.tb_summary, self.accelerator)
-            eval.evaluate(self.epoch, self.global_step)
+            eval = Evaluation2D(self.config, pipeline, self.d2_eval_dataloader, None if not self.accelerator.is_main_process else self.tb_summary, self.accelerator, self)
+            eval.evaluate(self.global_step)
 
         # Evaluate 3D images composed of 2D slices
         if (self.epoch) % self.config.evaluate_3D_epochs == 0 or self.epoch == self.config.num_epochs - 1: 
-            eval = Evaluation3D(self.config, pipeline, self.d3_eval_dataloader)  
-            eval.evaluate(self.epoch)
+            eval = Evaluation3D(self.config, pipeline, self.d3_eval_dataloader, None if not self.accelerator.is_main_process else self.tb_summary, self.accelerator)  
+            eval.evaluate(self.global_step)
     
         # Save model
         if self.accelerator.is_main_process:

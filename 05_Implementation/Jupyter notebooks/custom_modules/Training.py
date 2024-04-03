@@ -72,7 +72,7 @@ class Training(ABC):
         #print(dist_from_center[0,255,255]) #=255
         #print(dist_from_center[0,127,127]) #=180.313 
         
-        masks = dist_from_center > radius[:,None,None] # creates mask for pixels which are outside the radius. 
+        masks = dist_from_center < radius[:,None,None] # creates mask for pixels which are inside the radius. 
         masks = masks[:,None,:,:].int() 
         return masks
 
@@ -113,16 +113,16 @@ class Training(ABC):
         self.progress_bar.set_postfix(**logs)
         #accelerator.log(logs, step=global_step)
 
-    def _get_noisy_images(self, clean_images):
+    def _get_noisy_images(self, clean_images, generator=None):
 
         # Sample noise to add to the images
-        noise = torch.randn(clean_images.shape, device=clean_images.device)
+        noise = torch.randn(clean_images.shape, device=clean_images.device, generator=generator)
         bs = clean_images.shape[0]
 
         # Sample a random timestep for each image
         timesteps = torch.randint(
             0, self.noise_scheduler.config.num_train_timesteps, (bs,), device=clean_images.device,
-            dtype=torch.int64
+            dtype=torch.int64, generator=generator
         ) 
 
         # Add noise to the voided images according to the noise magnitude at each timestep (forward diffusion process)
@@ -131,7 +131,7 @@ class Training(ABC):
         return noisy_images, noise, timesteps
 
     @abstractmethod
-    def _get_training_input(self, batch):
+    def _get_training_input(self, batch, generator=None):
         pass
 
     @abstractmethod
