@@ -10,8 +10,10 @@ file_list1 = list(folder1.rglob("*result-thick.csv"))
 file_list2 = list(folder2.rglob("*result-thick.csv"))
 file_list3 = list(folder1.rglob("*result-thickstd.csv"))
 file_list4 = list(folder2.rglob("*result-thickstd.csv"))
+file_list5 = list(folder1.rglob("*result-vol.csv"))
+file_list6 = list(folder2.rglob("*result-vol.csv"))
 
-lists = [[file_list1, file_list2], [file_list3, file_list4]]
+lists = [[file_list1, file_list2], [file_list3, file_list4], [file_list5, file_list6]]
 
 for list1, list2 in lists:
     for file1, file2 in zip(list1, list2):
