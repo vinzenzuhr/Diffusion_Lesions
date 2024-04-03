@@ -18,7 +18,7 @@ class DatasetMRI2D(DatasetMRI):
             # if there are masks restrict slices to mask content
             if(self.list_paths_masks):
                 for path_mask in self.list_paths_masks[j]:
-                    t1n_mask = self._get_mask(path_mask, self.list_paths_segm[j])
+                    t1n_mask = self._get_mask(path_mask, self.list_paths_segm[j] if self.list_paths_segm else None)
                     if (t1n_mask is None):
                         continue 
  
@@ -64,7 +64,7 @@ class DatasetMRI2D(DatasetMRI):
 
             else:
                 # if there are no masks, but a segmentation mask restrict slices to white matter regions
-                if(root_dir_segm):
+                if(self.list_paths_segm):
                     t1n_segm = self._get_white_matter_segm(self.list_paths_segm[j])
 
                     # get first slice with white matter content  
@@ -130,7 +130,7 @@ class DatasetMRI2D(DatasetMRI):
                 t1n_segm = self._padding(t1n_segm.to(torch.uint8))
                 t1n_segm_slice = t1n_segm[:,slice_idx,:]
             else:
-                t1n_segm_slice = None   
+                t1n_segm_slice = torch.empty(0)   
 
             # load masks
             if(mask_path): 
@@ -154,17 +154,15 @@ class DatasetMRI2D(DatasetMRI):
                 # pad to pad_shape and get 2D slice from 3D 
                 mask = torch.Tensor(mask)
                 mask = self._padding(mask.to(torch.uint8)) 
-                # invert mask, where 0 defines the part to inpaint
-                mask = 1-mask 
                  
                 mask_slice = mask[:,slice_idx,:] 
             else:
-                mask_slice = None 
+                mask_slice = torch.empty(0) 
             # Output data
             sample_dict = {
                 "gt_image": t1n_slice.unsqueeze(0),
                 "segm": t1n_segm_slice, 
-                "mask": mask_slice.unsqueeze(0) if self.list_paths_masks else torch.empty(0),
+                "mask": mask_slice.unsqueeze(0),
                 "max_v": t1n_max_v,
                 "idx": int(idx),
                 "name": t1n_path.parent.stem,

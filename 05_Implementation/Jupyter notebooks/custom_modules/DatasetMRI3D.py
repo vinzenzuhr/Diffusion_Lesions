@@ -68,7 +68,7 @@ class DatasetMRI3D(DatasetMRI):
 
             # load t1n img
             t1n_img = nib.load(t1n_path)
-            t1n_img = t1n_img.get_fdata()  
+            t1n_img = t1n_img.get_fdata()
 
             # preprocess t1n
             t1n_img, t1n_max_v = self.preprocess(t1n_img)  
@@ -88,7 +88,7 @@ class DatasetMRI3D(DatasetMRI):
                 t1n_segm = torch.Tensor(t1n_segm.copy())
                 t1n_segm = self._padding(t1n_segm) 
             else:
-                t1n_segm = None  
+                t1n_segm = torch.empty(0)  
 
             # load masks 
             if(mask_path): 
@@ -111,16 +111,14 @@ class DatasetMRI3D(DatasetMRI):
 
                 mask = torch.Tensor(mask)
                 mask = self._padding(mask.to(torch.uint8))
-                # invert mask, where 0 defines the part to inpaint
-                mask = 1-mask 
             else:
-                mask = None
+                mask = torch.empty(0)
             
             # Output data
             sample_dict = {
                 "gt_image": t1n_img.unsqueeze(0), 
                 "segm": t1n_segm, 
-                "mask": mask.unsqueeze(0) if self.list_paths_masks else torch.empty(0), 
+                "mask": mask.unsqueeze(0), 
                 "max_v": t1n_max_v, 
                 "idx": int(idx), 
                 "name": t1n_path.parent.stem 

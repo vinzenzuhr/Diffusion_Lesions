@@ -232,6 +232,8 @@ class DatasetMRI(Dataset):
         #Size assertions
         if t1n.shape != DatasetMRI.reference_shape:
             raise UserWarning(f"Your t1n shape is not {DatasetMRI.reference_shape}, it is {t1n.shape}")
+        
+        
 
         #Normalize the image to [0,1]
         t1n[t1n<0] = 0 #Values below 0 are considered to be noise #TODO: Check validity
@@ -242,7 +244,7 @@ class DatasetMRI(Dataset):
         t1n = torch.Tensor(t1n)
         t1n = DatasetMRI._padding(t1n)
 
-        #map images from [0,1] to [-1,1]
+        #map images from [0,1] to [-1,1] following the DDPM paper
         t1n = (t1n*2) - 1
 
         return t1n, t1n_max_v
