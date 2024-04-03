@@ -1,5 +1,5 @@
 #setup evaluation
-from Evaluation import Evaluation
+import EvaluationUtils
 from diffusers.utils import make_image_grid
 import numpy as np
 import os
@@ -12,7 +12,7 @@ import torch
 from torcheval.metrics import PeakSignalNoiseRatio
 from torchvision.transforms.functional import to_pil_image
 
-class Evaluation2D(Evaluation):
+class Evaluation2D():
     def __init__(self, config, pipeline, dataloader, tb_summary, accelerator, train_env):
         self.config = config
         self.pipeline = pipeline
@@ -33,7 +33,7 @@ class Evaluation2D(Evaluation):
         for image_list, title in zip(images, titles): 
             image_grid = make_image_grid(image_list, rows=int(len(image_list)**0.5), cols=int(len(image_list)**0.5))
             image_grid.save(f"{path}/{title}_{global_step:07d}.png")
-        print("image saved")   
+        print("image saved")
 
     def evaluate(self, global_step, parameters={}):
         #initialize metrics
@@ -79,7 +79,7 @@ class Evaluation2D(Evaluation):
             all_clean_images = self.accelerator.gather_for_metrics(clean_images)
             all_inpainted_images = self.accelerator.gather_for_metrics(inpainted_images)
             all_masks = self.accelerator.gather_for_metrics(masks) 
-            new_metrics = self._calc_metrics(all_clean_images, all_inpainted_images, all_masks)
+            new_metrics = EvaluationUtils.calc_metrics(all_clean_images, all_inpainted_images, all_masks)
 
             for key, value in new_metrics.items(): 
                 metrics[key] += value
@@ -89,7 +89,7 @@ class Evaluation2D(Evaluation):
 
         if self.accelerator.is_main_process:
             # log metrics
-            self._log_metrics(self.tb_summary, global_step, metrics)
+            EvaluationUtils.log_metrics(self.tb_summary, global_step, metrics)
 
             # save last batch as sample images 
             # change range from [-1,1] to [0,1]

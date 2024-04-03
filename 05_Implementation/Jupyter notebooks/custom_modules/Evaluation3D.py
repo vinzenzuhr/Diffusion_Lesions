@@ -1,11 +1,11 @@
-from Evaluation import Evaluation
+import EvaluationUtils
 from DatasetMRI import DatasetMRI
 import math
 import numpy as np
 import os
 import torch
 
-class Evaluation3D(Evaluation):
+class Evaluation3D():
     def __init__(self, config, pipeline, dataloader, tb_summary, accelerator):
         self.config = config
         self.pipeline = pipeline
@@ -75,7 +75,7 @@ class Evaluation3D(Evaluation):
                 all_clean_images = self.accelerator.gather_for_metrics(clean_images)
                 all_3d_images = self.accelerator.gather_for_metrics(final_3d_images) 
                 all_masks = self.accelerator.gather_for_metrics(masks)
-                new_metrics = self._calc_metrics(all_clean_images, all_3d_images, all_masks)
+                new_metrics = EvaluationUtils.calc_metrics(all_clean_images, all_3d_images, all_masks)
 
                 for key, value in new_metrics.items(): 
                     metrics[key] += value 
@@ -91,6 +91,6 @@ class Evaluation3D(Evaluation):
             metrics[key] /= num_iterations
 
         if self.accelerator.is_main_process: 
-            self._log_metrics(self.tb_summary, global_step, metrics)
+            EvaluationUtils.log_metrics(self.tb_summary, global_step, metrics)
 
         print("3D evaluation finished")
