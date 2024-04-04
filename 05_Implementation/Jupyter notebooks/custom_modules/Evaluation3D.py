@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 import EvaluationUtils
 from DatasetMRI import DatasetMRI
 import math
@@ -5,7 +6,7 @@ import numpy as np
 import os
 import torch
 
-class Evaluation3D():
+class Evaluation3D(ABC):
     def __init__(self, config, pipeline, dataloader, tb_summary, accelerator):
         self.config = config
         self.pipeline = pipeline
@@ -16,6 +17,10 @@ class Evaluation3D():
         # create folder for segmentation algorithm afterwards
         segmentation_dir = os.path.join(config.output_dir, "segmentations_3D")
         os.makedirs(segmentation_dir, exist_ok=True) 
+
+    @abstractmethod
+    def _start_pipeline(self, clean_images, masks, parameters):
+        pass
     
     def evaluate(self, global_step, parameters={}):
         #initialize metrics 
@@ -34,42 +39,34 @@ class Evaluation3D():
                 max_v = batch["max_v"][sample_idx]
                 idx = batch["idx"][sample_idx]
                 name = batch["name"][sample_idx]
-                voided_images = clean_images*(1-masks)
             
-                #get slices which have to be inpainted
+                #get slices which have to be modified
                 slice_indices = []
-                for slice_idx in torch.arange(voided_images.shape[2]):
+                for slice_idx in torch.arange(clean_images.shape[2]):
                     if (masks[:, :, slice_idx, :]).any():
                         slice_indices.append(slice_idx.unsqueeze(0)) 
                 slice_indices = torch.cat(slice_indices, 0)
             
-                #create chunks of slices which have to be inpainted
-                stacked_void_mask = torch.stack((voided_images[:, :, slice_indices, :], masks[:, :, slice_indices, :]), dim=0)
-                stacked_void_mask = stacked_void_mask.permute(0, 3, 1, 2, 4) 
-                chunks = torch.chunk(stacked_void_mask, math.ceil(stacked_void_mask.shape[1]/self.config.eval_batch_size), dim=1)
+                #create chunks of slices which have to be modified
+                stacked_images = torch.stack((clean_images[:, :, slice_indices, :], masks[:, :, slice_indices, :]), dim=0)
+                stacked_images = stacked_images.permute(0, 3, 1, 2, 4) 
+                chunks = torch.chunk(stacked_images, math.ceil(stacked_images.shape[1]/self.config.eval_batch_size), dim=1)
                 
-                #inpaint all slices
-                inpainted_images = [] 
+                #modify all slices
+                images = [] 
                 for chunk in chunks:
-                    chunk_voided_images = chunk[0]
+                    chunk_images = chunk[0]
                     chunk_masks = chunk[1]
-                    
-                    images = self.pipeline(
-                        chunk_voided_images,
-                        chunk_masks,
-                        generator=torch.cuda.manual_seed_all(self.config.seed),
-                        output_type=np.array,
-                        num_inference_steps = self.config.num_inference_steps,
-                        **parameters
-                    ).images
-                    inpainted_images.append(torch.from_numpy(images))
-                inpainted_images = torch.cat(inpainted_images, dim=0)
-                inpainted_images = inpainted_images.permute(3, 1, 0, 2)
-                inpainted_images = inpainted_images.to(clean_images.device)
+
+                    new_images = self._start_pipeline(chunk_images, chunk_masks, parameters)
+
+                    images.append(new_images)
+                images = torch.cat(images, dim=0)
+                images = images.permute(3, 1, 0, 2) 
             
-                #overwrite the original 3D image with the inpainted 2D slices
+                #overwrite the original 3D image with the modified 2D slices
                 final_3d_images = torch.clone(clean_images.detach())
-                final_3d_images[:, :, slice_indices, :] = inpainted_images
+                final_3d_images[:, :, slice_indices, :] = images
 
                 #calculate metrics
                 all_clean_images = self.accelerator.gather_for_metrics(clean_images)
@@ -87,9 +84,9 @@ class Evaluation3D():
                 os.makedirs(save_dir, exist_ok=True)
                 DatasetMRI.save(final_3d_images, f"{save_dir}/T1.nii.gz", **self.dataloader.dataset.get_metadata(int(idx)))
         
+        # calculcate mean of metrics and log them
         for key, value in metrics.items():
             metrics[key] /= num_iterations
-
         if self.accelerator.is_main_process: 
             EvaluationUtils.log_metrics(self.tb_summary, global_step, metrics)
 

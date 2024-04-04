@@ -1,15 +1,13 @@
 #import custom modules
 from DDIMInpaintPipeline import DDIMInpaintPipeline
-from Evaluation2D import Evaluation2D
-from Evaluation3D import Evaluation3D
 
 # import other modules
 from Training import Training
 import torch
 
 class TrainingConditional(Training):
-    def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, trainingCircularMasks):
-        super().__init__(config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation)
+    def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, trainingCircularMasks, evaluation2D, evaluation3D, pipelineFactory):
+        super().__init__(config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory)
         self.trainingCircularMasks = trainingCircularMasks
 
     def _get_training_input(self, batch, generator=None):
@@ -35,18 +33,18 @@ class TrainingConditional(Training):
         # Create pipeline if not given
         self.model.eval()
         if pipeline is None:
-            pipeline = DDIMInpaintPipeline(unet=self.accelerator.unwrap_model(self.model), scheduler=self.noise_scheduler)
+            pipeline = self.pipelineFactory(self.accelerator.unwrap_model(self.model), self.noise_scheduler)
         pipeline = self.accelerator.prepare(pipeline)
         pipeline.to(self.accelerator.device)
         
         # Evaluate 2D images
         if (self.epoch) % self.config.evaluate_epochs == 0 or self.epoch == self.config.num_epochs - 1: 
-            eval = Evaluation2D(self.config, pipeline, self.d2_eval_dataloader, None if not self.accelerator.is_main_process else self.tb_summary, self.accelerator, self)
+            eval = self.evaluation2D(self.config, pipeline, self.d2_eval_dataloader, None if not self.accelerator.is_main_process else self.tb_summary, self.accelerator, self)
             eval.evaluate(self.global_step)
 
         # Evaluate 3D images composed of 2D slices
         if (self.epoch) % self.config.evaluate_3D_epochs == 0 or self.epoch == self.config.num_epochs - 1: 
-            eval = Evaluation3D(self.config, pipeline, self.d3_eval_dataloader, None if not self.accelerator.is_main_process else self.tb_summary, self.accelerator)  
+            eval = self.evaluation3D(self.config, pipeline, self.d3_eval_dataloader, None if not self.accelerator.is_main_process else self.tb_summary, self.accelerator)  
             eval.evaluate(self.global_step)
     
         # Save model

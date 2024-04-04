@@ -58,6 +58,6 @@ def log_metrics(tb_summary, global_step, metrics):
     """
 
     for key, value in metrics.items():
-        tb_summary.add_scalar(key, value, global_step)
         print(f"{key}: {value}")
+        tb_summary.add_scalar(key, value, global_step)
     print("global_step: ", global_step) 

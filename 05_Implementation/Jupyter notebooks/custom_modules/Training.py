@@ -11,12 +11,15 @@ import torch.nn.functional as F
 from tqdm.auto import tqdm
 
 class Training(ABC):
-    def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation):
+    def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory):
         self.config = config
         self.model = model
         self.noise_scheduler = noise_scheduler
         self.optimizer = optimizer
-        self.lr_scheduler = lr_scheduler 
+        self.lr_scheduler = lr_scheduler  
+        self.evaluation2D = evaluation2D
+        self.evaluation3D = evaluation3D
+        self.pipelineFactory = pipelineFactory
 
         self.accelerator = Accelerator(
             mixed_precision=config.mixed_precision,
