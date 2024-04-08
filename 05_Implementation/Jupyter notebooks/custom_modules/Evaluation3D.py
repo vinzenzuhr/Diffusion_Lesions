@@ -39,6 +39,7 @@ class Evaluation3D(ABC):
                 max_v = batch["max_v"][sample_idx]
                 idx = batch["idx"][sample_idx]
                 name = batch["name"][sample_idx]
+                image_shape = batch["original_shape"][sample_idx]
             
                 #get slices which have to be modified
                 slice_indices = []
@@ -79,7 +80,7 @@ class Evaluation3D(ABC):
                 num_iterations += 1
             
                 #postprocess and save image as nifti file
-                final_3d_images = DatasetMRI.postprocess(final_3d_images, max_v)  
+                final_3d_images = DatasetMRI.postprocess(final_3d_images, max_v, image_shape = image_shape)  
                 save_dir = os.path.join(self.config.output_dir, f"samples_3D/{name}") 
                 os.makedirs(save_dir, exist_ok=True)
                 DatasetMRI.save(final_3d_images, f"{save_dir}/T1.nii.gz", **self.dataloader.dataset.get_metadata(int(idx)))
@@ -87,7 +88,12 @@ class Evaluation3D(ABC):
         # calculcate mean of metrics and log them
         for key, value in metrics.items():
             metrics[key] /= num_iterations
+
+        #rename metrics to 3D metrics
+        dim3_metrics = dict()
+        for key, value in metrics.items():
+            dim3_metrics[f"{key}_3D"] = value
         if self.accelerator.is_main_process: 
-            EvaluationUtils.log_metrics(self.tb_summary, global_step, metrics)
+            EvaluationUtils.log_metrics(self.tb_summary, global_step, dim3_metrics)
 
         print("3D evaluation finished")
