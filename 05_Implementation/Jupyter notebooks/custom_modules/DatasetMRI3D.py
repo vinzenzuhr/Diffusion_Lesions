@@ -68,10 +68,10 @@ class DatasetMRI3D(DatasetMRI):
 
             # load t1n img
             t1n_img = nib.load(t1n_path)
-            t1n_img = t1n_img.get_fdata()
+            t1n_img_orig = t1n_img.get_fdata()
 
             # preprocess t1n
-            t1n_img, t1n_max_v = self.preprocess(t1n_img)  
+            t1n_img, t1n_max_v = self.preprocess(t1n_img_orig)  
 
             # load segmentation
             if(segm_path):
@@ -121,6 +121,7 @@ class DatasetMRI3D(DatasetMRI):
                 "mask": mask.unsqueeze(0), 
                 "max_v": t1n_max_v, 
                 "idx": int(idx), 
-                "name": t1n_path.parent.stem 
+                "name": t1n_path.parent.stem,
+                "original_shape": t1n_img_orig.shape 
             } 
             return sample_dict

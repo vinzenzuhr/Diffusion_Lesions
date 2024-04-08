@@ -18,6 +18,9 @@ class DatasetMRI(Dataset):
     Args:
         root_dir_img: Path to img files
         root_dir_segm: Path to segmentation maps
+        root_dir_masks: Path to mask files. 
+            Following hierarchy is expected: root_dir_masks/subject_id/*mask.nii.gz. 
+            Inside subject_id folder there can be more than one mask file for every t1n file.
         pad_shape: Shape the images will be transformed to
 
     Raises:
@@ -32,8 +35,6 @@ class DatasetMRI(Dataset):
             
     """
 
-    
-    reference_shape = (256,256,160)
     pad_shape = (256,256,256)
 
     def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, directDL: bool = True, seed: int = None, only_connected_masks: bool = False):
@@ -42,9 +43,9 @@ class DatasetMRI(Dataset):
         self.directDL = directDL
         if(root_dir_masks):
             #make a list of lists containing all paths to masks
-            self.list_paths_masks = []
+            self.list_paths_masks = list()
             folder_list = list(root_dir_masks.glob("*")) 
-            for folder in folder_list: 
+            for folder in folder_list:
                 self.list_paths_masks.append(list(folder.rglob("*.nii.gz")))
         else:
             self.list_paths_masks = None
@@ -60,7 +61,7 @@ class DatasetMRI(Dataset):
         if(root_dir_segm and (len(self.list_paths_t1n) != len(self.list_paths_segm))):
             raise ValueError(f"The amount of T1n files and segm files must be the same. Got {len(self.list_paths_t1n)} and {len(self.list_paths_segm)}")        
         if(root_dir_masks and (len(self.list_paths_t1n)!= len(self.list_paths_masks))):
-            raise ValueError(f"The amount of T1n files and mask folders must be the same. Got {len(self.list_paths_t1n)} and {len(self.list_paths_masks)}")
+            raise ValueError(f"The amount of T1n files and mask folders must be the same. Got {len(self.list_paths_t1n)} and {len(self.list_paths_masks)}") 
 
     def __len__(self): 
         return len(self.idx_to_element.keys()) 
@@ -156,9 +157,11 @@ class DatasetMRI(Dataset):
         """
 
         #pad to bounding box
-        size = DatasetMRI.pad_shape # shape of bounding box is (size,size,size)
-        d, w, h = t1n.shape[-3], t1n.shape[-2], t1n.shape[-1]
-        d_max, w_max, h_max = size
+        d_max, w_max, h_max = DatasetMRI.pad_shape
+        d, w, h = t1n.shape[-3], t1n.shape[-2], t1n.shape[-1] 
+
+        assert d <= d_max and w <= w_max and h <= h_max, f"The shape of the input image ({t1n.shape}) is bigger than pad_shape ({DatasetMRI.pad_shape})"
+
         d_pad = max((d_max - d) / 2, 0)
         w_pad = max((w_max - w) / 2, 0)
         h_pad = max((h_max - h) / 2, 0)
@@ -174,7 +177,7 @@ class DatasetMRI(Dataset):
         return t1n
 
     @staticmethod
-    def postprocess(t1n: torch.Tensor, t1n_max_v: float):
+    def postprocess(t1n: torch.Tensor, t1n_max_v: float, reference_shape: tuple):
         """
         Transforms the images back to their original format.
         Maps from [-1,1] to [0,1] and scales to original max value.
@@ -182,6 +185,7 @@ class DatasetMRI(Dataset):
         Args:
             t1n (torch.Tensor): 3D t1n img
             t1n_max_v (float): Maximal value of t1n image (used for normalization).
+            reference_shape (tuple): Shape the images will be transformed to
 
         Returns:
             t1n: The padded and cropped version of t1n.
@@ -192,7 +196,7 @@ class DatasetMRI(Dataset):
 
         #remove padding
         d, w, h = t1n.shape[-3], t1n.shape[-2], t1n.shape[-1]
-        d_new, w_new, h_new = DatasetMRI.reference_shape # (256,256,160)
+        d_new, w_new, h_new = reference_shape
         
         d_unpad = max((d - d_new) / 2, 0)
         w_unpad = max((w - w_new) / 2, 0)
@@ -227,13 +231,7 @@ class DatasetMRI(Dataset):
         Returns:
             t1n: The padded and cropped version of t1n.
             t1n_max_v: Maximal value of t1n image (used for normalization).
-        """
-
-        #Size assertions
-        if t1n.shape != DatasetMRI.reference_shape:
-            raise UserWarning(f"Your t1n shape is not {DatasetMRI.reference_shape}, it is {t1n.shape}")
-        
-        
+        """   
 
         #Normalize the image to [0,1]
         t1n[t1n<0] = 0 #Values below 0 are considered to be noise #TODO: Check validity

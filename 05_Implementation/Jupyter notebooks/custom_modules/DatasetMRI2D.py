@@ -47,21 +47,6 @@ class DatasetMRI2D(DatasetMRI):
                         else:
                             self.idx_to_element[idx]=(self.list_paths_t1n[j], self.list_paths_segm[j] if self.list_paths_segm else None, path_mask, None, None, idx_slice)
                             idx+=1
-                    
-                    ### calculate n, then go through every component and for every component through every slice
-                    #TODO: n speichern und if "only connected masks"
-                    """
-                    for idx_component in list_component_labels:
-                        for idx_slice in torch.arange(t1n_mask.shape[1]):
-                            min_area = 100
-                            if (torch.count_nonzero(component_matrix[:,idx_slice,:]==idx_component) < min_area):
-                                continue 
-                            self.idx_to_element[idx]=(self.list_paths_t1n[j], self.list_paths_segm[j] if self.list_paths_segm else None, path_mask, path_component_matrix, idx_component, idx_slice)
-                            idx+=1
-                    """
-
-
-
             else:
                 # if there are no masks, but a segmentation mask restrict slices to white matter regions
                 if(self.list_paths_segm):
@@ -127,7 +112,7 @@ class DatasetMRI2D(DatasetMRI):
                 # pad to pad_shape and get 2D slice from 3D
                 # make copy to avoid negative strides, which are not supported in Pytorch
                 t1n_segm = torch.Tensor(t1n_segm.copy())
-                t1n_segm = self._padding(t1n_segm.to(torch.uint8))
+                t1n_segm = self._padding(t1n_segm)
                 t1n_segm_slice = t1n_segm[:,slice_idx,:]
             else:
                 t1n_segm_slice = torch.empty(0)   
@@ -144,8 +129,7 @@ class DatasetMRI2D(DatasetMRI):
                         mask[component_matrix == components[rand_idx]] = 1  
                 else:
                     mask = nib.load(mask_path)
-                    mask = mask.get_fdata()
-
+                    mask = mask.get_fdata() 
                     # if there is a segmentation restrict mask to white matter regions
                     if(segm_path):
                         binary_white_matter_segm = self._get_white_matter_segm(segm_path) 
@@ -157,7 +141,8 @@ class DatasetMRI2D(DatasetMRI):
                  
                 mask_slice = mask[:,slice_idx,:] 
             else:
-                mask_slice = torch.empty(0) 
+                mask_slice = torch.empty(0)   
+                            
             # Output data
             sample_dict = {
                 "gt_image": t1n_slice.unsqueeze(0),
