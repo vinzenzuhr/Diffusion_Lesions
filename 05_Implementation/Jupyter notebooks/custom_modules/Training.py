@@ -145,12 +145,11 @@ class Training(ABC):
         for self.epoch in torch.arange(self.config.num_epochs):
             self.progress_bar = tqdm(total=len(self.train_dataloader), disable=not self.accelerator.is_local_main_process) 
             self.progress_bar.set_description(f"Epoch {self.epoch}") 
-            self.model.train()
-
+            self.model.train() 
             for batch in self.train_dataloader:
 
                 input, noise, timesteps = self._get_training_input(batch)                
-
+                 
                 with self.accelerator.accumulate(self.model):
                     # Predict the noise residual
                     noise_pred = self.model(input, timesteps, return_dict=False)[0]
@@ -180,5 +179,5 @@ class Training(ABC):
 
                 if self.config.debug:
                     break
-
+             
             self.evaluate()

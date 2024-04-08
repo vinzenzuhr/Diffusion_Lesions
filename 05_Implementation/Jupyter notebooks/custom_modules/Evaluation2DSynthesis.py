@@ -35,8 +35,7 @@ class Evaluation2DSynthesis(Evaluation2D):
     def _start_pipeline(self, clean_images, masks, segmentation, parameters={}):  
         #add coarse lesions
         images_with_lesions = self._add_lesions_from_gm(clean_images, masks, segmentation)
-
-        #TODO: add intermediate timestep
+        print(2) 
         #run it through network
         synthesized_images = self.pipeline(
             images_with_lesions,
@@ -46,5 +45,6 @@ class Evaluation2DSynthesis(Evaluation2D):
             num_inference_steps = self.config.num_inference_steps,
             **parameters
         ).images
+        print(3)
         synthesized_images = torch.from_numpy(synthesized_images).to(clean_images.device) 
         return synthesized_images

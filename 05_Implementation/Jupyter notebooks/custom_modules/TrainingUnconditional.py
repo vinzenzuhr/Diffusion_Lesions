@@ -21,8 +21,8 @@ class TrainingUnconditional(Training):
         if pipeline is None:
             pipeline = self.pipelineFactory(self.accelerator.unwrap_model(self.model), self.noise_scheduler) 
         pipeline = self.accelerator.prepare(pipeline)
-        pipeline.to(self.accelerator.device)
-
+        pipeline.to(self.accelerator.device) 
+        
         # Evaluate 2D images
         if (self.epoch) % self.config.evaluate_epochs == 0 or self.epoch == self.config.num_epochs - 1: 
             eval = self.evaluation2D(

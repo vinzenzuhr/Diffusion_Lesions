@@ -30,12 +30,12 @@ class TrainingConfig:
     save_model_epochs = 60 # 300
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
     output_dir = "lesion-filling-256-cond-circle"  # the model name locally and on the HF Hub
-    dataset_train_path = "./dataset_train/imgs"
-    segm_train_path = "./dataset_train/segm"
-    masks_train_path = "./dataset_train/masks"
-    dataset_eval_path = "./dataset_eval/imgs"
-    segm_eval_path = "./dataset_eval/segm"
-    masks_eval_path = "./dataset_eval/masks" 
+    dataset_train_path = "./datasets/filling/dataset_train/imgs"
+    segm_train_path = "./datasets/filling/dataset_train/segm"
+    masks_train_path = "./datasets/filling/dataset_train/masks"
+    dataset_eval_path = "./datasets/filling/dataset_eval/imgs"
+    segm_eval_path = "./datasets/filling/dataset_eval/segm"
+    masks_eval_path = "./datasets/filling/dataset_eval/masks" 
     train_only_connected_masks=False # No Training with lesion masks
     eval_only_connected_masks=False 
     num_inference_steps=50
@@ -239,10 +239,25 @@ config.lr_scheduler = "cosine_schedule_with_warmup"
 
 from TrainingConditional import TrainingConditional
 from DDIMInpaintPipeline import DDIMInpaintPipeline
+from Evaluation2DFilling import Evaluation2DFilling
+from Evaluation3DFilling import Evaluation3DFilling  
+import PipelineFactories
 
 config.conditional_data = "Circles"
 
-args = {"config": config, "model": model, "noise_scheduler": noise_scheduler, "optimizer": optimizer, "lr_scheduler": lr_scheduler, "datasetTrain": datasetTrain, "datasetEvaluation": datasetEvaluation, "dataset3DEvaluation": dataset3DEvaluation, "trainingCircularMasks": True} 
+args = {
+    "config": config, 
+    "model": model, 
+    "noise_scheduler": noise_scheduler, 
+    "optimizer": optimizer, 
+    "lr_scheduler": lr_scheduler, 
+    "datasetTrain": datasetTrain, 
+    "datasetEvaluation": datasetEvaluation, 
+    "dataset3DEvaluation": dataset3DEvaluation, 
+    "trainingCircularMasks": True, 
+    "evaluation2D": Evaluation2DFilling,
+    "evaluation3D": Evaluation3DFilling, 
+    "pipelineFactory": PipelineFactories.get_ddim_inpaint_pipeline} 
 trainingCircles = TrainingConditional(**args)
 
 

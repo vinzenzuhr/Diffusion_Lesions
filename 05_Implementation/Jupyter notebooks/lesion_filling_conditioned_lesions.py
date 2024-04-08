@@ -1,14 +1,14 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[ ]:
+# In[1]:
 
 
 import sys
 sys.path.insert(1, './custom_modules')
 
 
-# In[ ]:
+# In[2]:
 
 
 #create config
@@ -30,12 +30,12 @@ class TrainingConfig:
     save_model_epochs = 60
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
     output_dir = "lesion-filling-256-cond-lesions"  # the model name locally and on the HF Hub
-    dataset_train_path = "./dataset_train/imgs"
-    segm_train_path = "./dataset_train/segm"
-    masks_train_path = "./dataset_train/masks"
-    dataset_eval_path = "./dataset_eval/imgs"
-    segm_eval_path = "./dataset_eval/segm"
-    masks_eval_path = "./dataset_eval/masks" 
+    dataset_train_path = "./datasets/filling/dataset_train/imgs"
+    segm_train_path = "./datasets/filling/dataset_train/segm"
+    masks_train_path = "./datasets/filling/dataset_train/masks"
+    dataset_eval_path = "./datasets/filling/dataset_eval/imgs"
+    segm_eval_path = "./datasets/filling/dataset_eval/segm"
+    masks_eval_path = "./datasets/filling/dataset_eval/masks" 
     train_only_connected_masks=True
     eval_only_connected_masks=False
     num_inference_steps=50
@@ -50,7 +50,7 @@ class TrainingConfig:
 config = TrainingConfig()
 
 
-# In[ ]:
+# In[3]:
 
 
 if config.debug:
@@ -65,7 +65,7 @@ if config.debug:
     masks_train_path = "./dataset_eval/masks" 
 
 
-# In[ ]:
+# In[4]:
 
 
 #setup huggingface accelerate
@@ -76,7 +76,7 @@ accelerate.commands.config.default.write_basic_config(config.mixed_precision)
 #if there are problems with ports then add manually "main_process_port: 0" or another number to yaml file
 
 
-# In[ ]:
+# In[5]:
 
 
 from DatasetMRI2D import DatasetMRI2D
@@ -91,7 +91,7 @@ dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), 
 
 # ### Visualize dataset
 
-# In[ ]:
+# In[6]:
 
 
 import matplotlib.pyplot as plt
@@ -107,7 +107,7 @@ for i, idx in enumerate(random_indices):
 fig.show()
 
 
-# In[ ]:
+# In[7]:
 
 
 # Plot: masks
@@ -120,7 +120,7 @@ fig.show()
 
 # ### Prepare Training
 
-# In[ ]:
+# In[8]:
 
 
 #create model
@@ -153,7 +153,7 @@ model = UNet2DModel(
 config.model = "UNet2DModel"
 
 
-# In[ ]:
+# In[9]:
 
 
 #setup noise scheduler
@@ -170,7 +170,7 @@ noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
 config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
 
 
-# In[ ]:
+# In[10]:
 
 
 # setup lr scheduler
@@ -187,19 +187,34 @@ lr_scheduler = get_cosine_schedule_with_warmup(
 config.lr_scheduler = "cosine_schedule_with_warmup"
 
 
-# In[ ]:
+# In[11]:
 
 
 from TrainingConditional import TrainingConditional
 from DDIMInpaintPipeline import DDIMInpaintPipeline
+from Evaluation2DFilling import Evaluation2DFilling
+from Evaluation3DFilling import Evaluation3DFilling 
+import PipelineFactories
 
 config.conditional_data = "Lesions"
 
-args = {"config": config, "model": model, "noise_scheduler": noise_scheduler, "optimizer": optimizer, "lr_scheduler": lr_scheduler, "datasetTrain": datasetTrain, "datasetEvaluation": datasetEvaluation, "dataset3DEvaluation": dataset3DEvaluation, "trainingCircularMasks": False} 
+args = {
+    "config": config, 
+    "model": model, 
+    "noise_scheduler": noise_scheduler, 
+    "optimizer": optimizer, 
+    "lr_scheduler": lr_scheduler, 
+    "datasetTrain": datasetTrain, 
+    "datasetEvaluation": datasetEvaluation, 
+    "dataset3DEvaluation": dataset3DEvaluation, 
+    "trainingCircularMasks": False, 
+    "evaluation2D": Evaluation2DFilling,
+    "evaluation3D": Evaluation3DFilling, 
+    "pipelineFactory": PipelineFactories.get_ddim_inpaint_pipeline}
 trainingLesions = TrainingConditional(**args)
 
 
-# In[ ]:
+# In[12]:
 
 
 if config.mode == "train":

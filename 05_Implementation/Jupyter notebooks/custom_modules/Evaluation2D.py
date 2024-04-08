@@ -13,7 +13,7 @@ import torch
 from torcheval.metrics import PeakSignalNoiseRatio
 from torchvision.transforms.functional import to_pil_image
 from torchvision.ops import masks_to_boxes
-from torcheval.metrics import FrechetInceptionDistance
+from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 class Evaluation2D(ABC):
     def __init__(self, config, pipeline, dataloader, tb_summary, accelerator, train_env):
@@ -23,6 +23,28 @@ class Evaluation2D(ABC):
         self.tb_summary = tb_summary
         self.accelerator = accelerator
         self.train_env = train_env 
+        self.lpips_metric = LearnedPerceptualImagePatchSimilarity(net_type='vgg')
+
+    def _calc_lpip(self, images_1, images_2, masks):
+
+        # create rectangular bounding_boxes
+        all_bounding_boxes = masks_to_boxes(masks.squeeze(dim=1)).to(torch.int32) 
+        # returns a [N, 4] tensor containing bounding boxes. The boxes are in (x1, y1, x2, y2) format with 0 <= x1 < x2 and 0 <= y1 < y2.
+        assert all_bounding_boxes.shape[0] == masks.shape[0], "Number of bounding boxes expected to match number of masks."
+        
+        #calculcate lpips for every image and take average
+        lpips = 0
+        for i in range(images_1.shape[0]):
+            mask = torch.zeros_like(masks, dtype=torch.bool)
+            mask[i, :, all_bounding_boxes[i][1]:all_bounding_boxes[i][3], all_bounding_boxes[i][0]:all_bounding_boxes[i][2]] = True #TODO: check if correct coordinates
+            width = all_bounding_boxes[i][2] - all_bounding_boxes[i][0]
+            height = all_bounding_boxes[i][3] - all_bounding_boxes[i][1] 
+            img1 = images_1[mask].reshape(1, 1, height, width).expand(-1, 3, -1, -1)
+            img2 = images_2[mask].reshape(1, 1, height, width).expand(-1, 3, -1, -1)
+            lpips += self.lpips_metric(img1, img2)
+        lpips /= images_1.shape[0]
+
+        return lpips 
 
     def _reset_seed(self, seed): 
         np.random.seed(seed) 
@@ -45,31 +67,29 @@ class Evaluation2D(ABC):
     def evaluate(self, global_step, parameters={}):
         #initialize metrics
         metrics = dict()
-        metric_list = ["ssim_full", "ssim_out", "ssim_in", "mse_full", "mse_out", "mse_in", "psnr_full", "psnr_out", "psnr_in", "val_loss", "fid"] 
+        metric_list = ["ssim_full", "ssim_out", "ssim_in", "mse_full", "mse_out", "mse_in", "psnr_full", "psnr_out", "psnr_in", "val_loss", "lpips"] 
         for metric in metric_list:
-            metrics[metric] = 0
-        fid = FrechetInceptionDistance()
-
+            metrics[metric] = 0 
+         
         self._reset_seed(self.config.seed)
         for n_iter, batch in enumerate(self.dataloader): 
             if n_iter >= self.config.evaluate_num_batches:
                 break
-
+             
             # calc validation loss
-            input, noise, timesteps = self.train_env._get_training_input(batch) 
-            noise_pred = self.pipeline.unet(input, timesteps, return_dict=False)[0]
-            loss = F.mse_loss(noise_pred, noise)            
-            all_loss = self.accelerator.gather_for_metrics(loss).mean()
-            metrics["val_loss"] += all_loss
+            input, noise, timesteps = self.train_env._get_training_input(batch)  
+            noise_pred = self.pipeline.unet(input, timesteps, return_dict=False)[0] # kernel dies
+            loss = F.mse_loss(noise_pred, noise)          
+            all_loss = self.accelerator.gather_for_metrics(loss).mean() 
+            metrics["val_loss"] += all_loss 
             #free up memory
-            del input, noise, timesteps, noise_pred, loss, all_loss
+            del input, noise, timesteps, noise_pred, loss, all_loss 
             torch.cuda.empty_cache()
-                
+             
             # get batch
             clean_images = batch["gt_image"]
             masks = batch["mask"]
-            segm = batch["segm"]
-
+            segm = batch["segm"] 
             images = self._start_pipeline( 
                 clean_images,
                 masks,
@@ -80,45 +100,21 @@ class Evaluation2D(ABC):
             # transform from B x H x W x C to B x C x H x W 
             images = torch.permute(images, (0, 3, 1, 2))
 
+            # calculate metrics
             all_clean_images = self.accelerator.gather_for_metrics(clean_images)
             all_images = self.accelerator.gather_for_metrics(images)
             all_masks = self.accelerator.gather_for_metrics(masks) 
+            metrics["lpips"] += self._calc_lpip(all_clean_images, all_images, all_masks)
             new_metrics = EvaluationUtils.calc_metrics(all_clean_images, all_images, all_masks)
-
             for key, value in new_metrics.items(): 
                 metrics[key] += value
 
-            # update FID 
-            # create rectangular bounding_boxes
-            all_bounding_boxes = masks_to_boxes(all_masks.squeeze(dim=1)).to(torch.int32) 
-            #Returns a [N, 4] tensor containing bounding boxes. The boxes are in (x1, y1, x2, y2) format with 0 <= x1 < x2 and 0 <= y1 < y2.
-            # create masks from bounding_boxes
-            all_rectangular_masks = torch.zeros_like(all_masks) 
-            for i in range(len(all_bounding_boxes)): 
-                all_rectangular_masks[i, :, all_bounding_boxes[i][1]:all_bounding_boxes[i][3], all_bounding_boxes[i][0]:all_bounding_boxes[i][2]] = 1 #TODO: check if correct coordinates
-
-            #extract patches from rectangular masks and update fid
-            #all_modified_patches = torch.empty_like(all_masks[all_rectangular_masks.to(torch.bool)]) 
-            #all_clean_patches = torch.empty_like(all_masks[all_rectangular_masks.to(torch.bool)]) 
-            all_modified_patches = all_images[all_rectangular_masks.to(torch.bool)]
-            all_clean_patches = all_clean_images[all_rectangular_masks.to(torch.bool)]
-            if all_modified_patches.dim() == 2:
-                all_modified_patches = all_modified_patches.unsqueeze(dim=0)
-                all_clean_patches = all_clean_patches.unsqueeze(dim=0)
-            all_modified_patches = all_modified_patches.unsqueeze(dim=1)
-            all_clean_patches = all_clean_patches.unsqueeze(dim=1) 
-            all_modified_patches = all_modified_patches.expand(-1, 3, -1, -1)
-            all_clean_patches = all_clean_patches.expand(-1, 3, -1, -1)
-            fid.update(all_clean_patches, True)
-            fid.update(all_modified_patches, False)
         
+        # calculate average metrics
         for key, value in metrics.items():
             metrics[key] /= self.config.evaluate_num_batches 
 
         if self.accelerator.is_main_process:
-            #compute fid
-            metrics["fid"] = fid.compute()  
-
             # log metrics
             EvaluationUtils.log_metrics(self.tb_summary, global_step, metrics)
 
