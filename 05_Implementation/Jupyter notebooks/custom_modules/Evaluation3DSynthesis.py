@@ -12,7 +12,7 @@ class Evaluation3DSynthesis(Evaluation3D):
         images_with_lesions[masks] = -1
         return images_with_lesions
 
-    def _start_pipeline(self, clean_images, masks, parameters):
+    def _start_pipeline(self, clean_images, masks, parameters={}):
         #add coarse lesions
         images_with_lesions = self._add_lesions(clean_images, masks)
 

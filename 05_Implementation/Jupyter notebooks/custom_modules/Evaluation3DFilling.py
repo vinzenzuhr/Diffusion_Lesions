@@ -6,7 +6,7 @@ class Evaluation3DFilling(Evaluation3D):
     def __init__(self, config, pipeline, dataloader, tb_summary, accelerator):
         super().__init__(config, pipeline, dataloader, tb_summary, accelerator)
 
-    def _start_pipeline(self, clean_images, masks, parameters):
+    def _start_pipeline(self, clean_images, masks, parameters={}):
         voided_images = clean_images*(1-masks)
 
         inpainted_images = self.pipeline(

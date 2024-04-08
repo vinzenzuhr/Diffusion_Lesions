@@ -3,9 +3,10 @@ from Training import Training
 from RePaintPipeline import RePaintPipeline
 
 class TrainingUnconditional(Training):
-    def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory, deactivate3Devaluation = True):
+    def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory, deactivate3Devaluation = True, evaluation_pipeline_parameters = {}):
         super().__init__(config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory)
-        self.deactivate3Devaluation = deactivate3Devaluation 
+        self.deactivate3Devaluation = deactivate3Devaluation
+        self.evaluation_pipeline_parameters = evaluation_pipeline_parameters 
 
     def _get_training_input(self, batch, generator=None):
         clean_images = batch["gt_image"]
@@ -33,10 +34,7 @@ class TrainingUnconditional(Training):
                 self)
             eval.evaluate(
                 self.global_step, 
-                parameters = {
-                    "jump_length": self.config.jump_length,
-                    "jump_n_sample": self.config.jump_n_sample,
-                })
+                parameters = self.evaluation_pipeline_parameters)
 
         
         # Evaluate 3D images composed of 2D slices
@@ -48,11 +46,8 @@ class TrainingUnconditional(Training):
                 None if not self.accelerator.is_main_process else self.tb_summary, 
                 self.accelerator)  
             eval.evaluate(
-                self.global_step,
-                parameters = {
-                    "jump_length": self.config.jump_length,
-                    "jump_n_sample": self.config.jump_n_sample,
-                })
+                self.global_step, 
+                parameters = self.evaluation_pipeline_parameters)
         
 
         # Save model
