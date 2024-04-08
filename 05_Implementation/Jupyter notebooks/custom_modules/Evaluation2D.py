@@ -12,6 +12,8 @@ from skimage.metrics import structural_similarity, mean_squared_error
 import torch
 from torcheval.metrics import PeakSignalNoiseRatio
 from torchvision.transforms.functional import to_pil_image
+from torchvision.ops import masks_to_boxes
+from torcheval.metrics import FrechetInceptionDistance
 
 class Evaluation2D(ABC):
     def __init__(self, config, pipeline, dataloader, tb_summary, accelerator, train_env):
@@ -43,9 +45,10 @@ class Evaluation2D(ABC):
     def evaluate(self, global_step, parameters={}):
         #initialize metrics
         metrics = dict()
-        metric_list = ["ssim_full", "ssim_out", "ssim_in", "mse_full", "mse_out", "mse_in", "psnr_full", "psnr_out", "psnr_in", "val_loss"] 
+        metric_list = ["ssim_full", "ssim_out", "ssim_in", "mse_full", "mse_out", "mse_in", "psnr_full", "psnr_out", "psnr_in", "val_loss", "fid"] 
         for metric in metric_list:
             metrics[metric] = 0
+        fid = FrechetInceptionDistance()
 
         self._reset_seed(self.config.seed)
         for n_iter, batch in enumerate(self.dataloader): 
@@ -65,10 +68,12 @@ class Evaluation2D(ABC):
             # get batch
             clean_images = batch["gt_image"]
             masks = batch["mask"]
+            segm = batch["segm"]
 
             images = self._start_pipeline( 
                 clean_images,
-                masks, 
+                masks,
+                segm, 
                 parameters
             )
 
@@ -82,11 +87,38 @@ class Evaluation2D(ABC):
 
             for key, value in new_metrics.items(): 
                 metrics[key] += value
+
+            # update FID 
+            # create rectangular bounding_boxes
+            all_bounding_boxes = masks_to_boxes(all_masks.squeeze(dim=1)).to(torch.int32) 
+            #Returns a [N, 4] tensor containing bounding boxes. The boxes are in (x1, y1, x2, y2) format with 0 <= x1 < x2 and 0 <= y1 < y2.
+            # create masks from bounding_boxes
+            all_rectangular_masks = torch.zeros_like(all_masks) 
+            for i in range(len(all_bounding_boxes)): 
+                all_rectangular_masks[i, :, all_bounding_boxes[i][1]:all_bounding_boxes[i][3], all_bounding_boxes[i][0]:all_bounding_boxes[i][2]] = 1 #TODO: check if correct coordinates
+
+            #extract patches from rectangular masks and update fid
+            #all_modified_patches = torch.empty_like(all_masks[all_rectangular_masks.to(torch.bool)]) 
+            #all_clean_patches = torch.empty_like(all_masks[all_rectangular_masks.to(torch.bool)]) 
+            all_modified_patches = all_images[all_rectangular_masks.to(torch.bool)]
+            all_clean_patches = all_clean_images[all_rectangular_masks.to(torch.bool)]
+            if all_modified_patches.dim() == 2:
+                all_modified_patches = all_modified_patches.unsqueeze(dim=0)
+                all_clean_patches = all_clean_patches.unsqueeze(dim=0)
+            all_modified_patches = all_modified_patches.unsqueeze(dim=1)
+            all_clean_patches = all_clean_patches.unsqueeze(dim=1) 
+            all_modified_patches = all_modified_patches.expand(-1, 3, -1, -1)
+            all_clean_patches = all_clean_patches.expand(-1, 3, -1, -1)
+            fid.update(all_clean_patches, True)
+            fid.update(all_modified_patches, False)
         
         for key, value in metrics.items():
             metrics[key] /= self.config.evaluate_num_batches 
 
         if self.accelerator.is_main_process:
+            #compute fid
+            metrics["fid"] = fid.compute()  
+
             # log metrics
             EvaluationUtils.log_metrics(self.tb_summary, global_step, metrics)
 
@@ -94,14 +126,14 @@ class Evaluation2D(ABC):
             masked_images = clean_images*(1-masks)
             
             # change range from [-1,1] to [0,1]
-            inpainted_images = (inpainted_images+1)/2
+            images = (images+1)/2
             masked_images = (masked_images+1)/2
             clean_images = (clean_images+1)/2
             # change binary image from 0,1 to 0,255
             masks = masks*255
 
             # save images
-            list = [inpainted_images, masked_images, clean_images, masks]
-            title_list = ["inpainted_images", "masked_images", "clean_images", "masks"] 
+            list = [images, masked_images, clean_images, masks]
+            title_list = ["images", "masked_images", "clean_images", "masks"] 
             image_list = [[to_pil_image(x, mode="L") for x in images] for images in list]
             self._save_image(image_list, title_list, os.path.join(self.config.output_dir, "samples_2D"), global_step)
