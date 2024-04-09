@@ -97,7 +97,7 @@ class DDIMGuidedPipeline(DiffusionPipeline):
         self.scheduler.set_timesteps(num_inference_steps)
 
         # create noisy images at given timestep
-        image = self.scheduler.add_noise(guiding_imgs, noise, timestep) 
+        image = self.scheduler.add_noise(guiding_imgs, noise, torch.tensor(timestep, device=guiding_imgs.device)) 
 
         for t in self.progress_bar(self.scheduler.timesteps[timestep:], total=num_inference_steps - timestep):
             print("current timestep: ", t)
