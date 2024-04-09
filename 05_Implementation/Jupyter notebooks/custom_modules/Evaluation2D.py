@@ -23,28 +23,28 @@ class Evaluation2D(ABC):
         self.tb_summary = tb_summary
         self.accelerator = accelerator
         self.train_env = train_env 
-        self.lpips_metric = LearnedPerceptualImagePatchSimilarity(net_type='vgg')
+        self.lpips_metric = LearnedPerceptualImagePatchSimilarity(net_type='alex').to(self.accelerator.device)
 
-    def _calc_lpip(self, images_1, images_2, masks):
+    def _calc_lpip(self, images_1, images_2):
 
         # create rectangular bounding_boxes
-        all_bounding_boxes = masks_to_boxes(masks.squeeze(dim=1)).to(torch.int32) 
+        #all_bounding_boxes = masks_to_boxes(masks.squeeze(dim=1)).to(torch.int32) 
         # returns a [N, 4] tensor containing bounding boxes. The boxes are in (x1, y1, x2, y2) format with 0 <= x1 < x2 and 0 <= y1 < y2.
-        assert all_bounding_boxes.shape[0] == masks.shape[0], "Number of bounding boxes expected to match number of masks."
+        #assert all_bounding_boxes.shape[0] == masks.shape[0], "Number of bounding boxes expected to match number of masks."
         
         #calculcate lpips for every image and take average
         lpips = 0
         for i in range(images_1.shape[0]):
-            mask = torch.zeros_like(masks, dtype=torch.bool)
-            mask[i, :, all_bounding_boxes[i][1]:all_bounding_boxes[i][3], all_bounding_boxes[i][0]:all_bounding_boxes[i][2]] = True #TODO: check if correct coordinates
-            width = all_bounding_boxes[i][2] - all_bounding_boxes[i][0]
-            height = all_bounding_boxes[i][3] - all_bounding_boxes[i][1] 
-            img1 = images_1[mask].reshape(1, 1, height, width).expand(-1, 3, -1, -1)
-            img2 = images_2[mask].reshape(1, 1, height, width).expand(-1, 3, -1, -1)
-            lpips += self.lpips_metric(img1, img2)
+            #mask = torch.zeros_like(masks, dtype=torch.bool)
+            #mask[i, :, all_bounding_boxes[i][1]:all_bounding_boxes[i][3], all_bounding_boxes[i][0]:all_bounding_boxes[i][2]] = True #TODO: check if correct coordinates
+            #width = all_bounding_boxes[i][2] - all_bounding_boxes[i][0]
+            #height = all_bounding_boxes[i][3] - all_bounding_boxes[i][1] 
+            #img1 = images_1[mask].reshape(1, 1, height, width).expand(-1, 3, -1, -1)
+            #img2 = images_2[mask].reshape(1, 1, height, width).expand(-1, 3, -1, -1)
+            lpips += self.lpips_metric(images_1[i].unsqueeze(0).expand(-1, 3, -1, -1), images_2[i].unsqueeze(0).expand(-1, 3, -1, -1))
         lpips /= images_1.shape[0]
 
-        return lpips 
+        return lpips
 
     def _reset_seed(self, seed): 
         np.random.seed(seed) 
@@ -88,12 +88,10 @@ class Evaluation2D(ABC):
              
             # get batch
             clean_images = batch["gt_image"]
-            masks = batch["mask"]
-            segm = batch["segm"] 
+            masks = batch["mask"] 
             images = self._start_pipeline( 
                 clean_images,
-                masks,
-                segm, 
+                masks, 
                 parameters
             )
 
@@ -104,7 +102,7 @@ class Evaluation2D(ABC):
             all_clean_images = self.accelerator.gather_for_metrics(clean_images)
             all_images = self.accelerator.gather_for_metrics(images)
             all_masks = self.accelerator.gather_for_metrics(masks) 
-            metrics["lpips"] += self._calc_lpip(all_clean_images, all_images, all_masks)
+            metrics["lpips"] += self._calc_lpip(all_clean_images, all_images)
             new_metrics = EvaluationUtils.calc_metrics(all_clean_images, all_images, all_masks)
             for key, value in new_metrics.items(): 
                 metrics[key] += value
