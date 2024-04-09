@@ -6,8 +6,7 @@ class Evaluation2DFilling(Evaluation2D):
     def __init__(self, config, pipeline, dataloader, tb_summary, accelerator, train_env):
         super().__init__(config, pipeline, dataloader, tb_summary, accelerator, train_env)  
 
-    def _start_pipeline(self, clean_images, masks, segmentation=None, parameters={}):
-        #segmentation is not needed
+    def _start_pipeline(self, clean_images, masks, parameters={}):
         voided_images = clean_images*(1-masks)
 
         inpainted_images = self.pipeline(
