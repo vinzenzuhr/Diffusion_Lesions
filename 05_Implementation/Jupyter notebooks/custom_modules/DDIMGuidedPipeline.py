@@ -91,16 +91,15 @@ class DDIMGuidedPipeline(DiffusionPipeline):
                 f" size of {batch_size}. Make sure the batch size matches the length of the generators."
             )
 
-        noise = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)
+
+        noise = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)  
 
         # set number of inference timesteps
         self.scheduler.set_timesteps(num_inference_steps)
 
-        # create noisy images at given timestep
-        image = self.scheduler.add_noise(guiding_imgs, noise, torch.tensor(timestep, device=guiding_imgs.device)) 
-
-        for t in self.progress_bar(self.scheduler.timesteps[timestep:], total=num_inference_steps - timestep):
-            print("current timestep: ", t)
+        # create noisy images at given timestep 
+        image = self.scheduler.add_noise(guiding_imgs, noise, torch.tensor(timestep, device=guiding_imgs.device))    
+        for t in self.scheduler.timesteps[timestep:]: 
             # 1. predict noise model_output
             model_output = self.unet(image, t).sample
 
@@ -109,12 +108,12 @@ class DDIMGuidedPipeline(DiffusionPipeline):
             # do x_t -> x_t-1
             image = self.scheduler.step(
                 model_output, t, image, eta=eta, use_clipped_model_output=use_clipped_model_output, generator=generator
-            ).prev_sample  
+            ).prev_sample   
 
         
-        image = image.cpu().permute(0, 2, 3, 1).numpy()
+        image = image.clamp(-1, 1).cpu().permute(0, 2, 3, 1).numpy()
         if output_type == "pil":
-            image = (image / 2 + 0.5).clamp(0, 1)
+            image = (image / 2 + 0.5)
             image = self.numpy_to_pil(image)
 
         if not return_dict:

@@ -99,7 +99,7 @@ class DDIMInpaintPipeline(DiffusionPipeline):
         #Input to unet model is concatenation of images, voided images and masks
         input=torch.cat((image, voided_imgs, masks), dim=1)
 
-        for t in self.progress_bar(self.scheduler.timesteps):
+        for t in self.scheduler.timesteps:
             # 1. predict noise model_output
             model_output = self.unet(input, t).sample
 
@@ -116,9 +116,9 @@ class DDIMInpaintPipeline(DiffusionPipeline):
         print(image.max(), image.min())
 
         
-        image = image.cpu().permute(0, 2, 3, 1).numpy()
+        image = image.clamp(-1, 1).cpu().permute(0, 2, 3, 1).numpy()
         if output_type == "pil":
-            image = (image / 2 + 0.5).clamp(0, 1)
+            image = (image / 2 + 0.5)
             image = self.numpy_to_pil(image)
 
         if not return_dict:
