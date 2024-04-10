@@ -5,6 +5,7 @@ import math
 import numpy as np
 import os
 import torch
+from tqdm.auto import tqdm
 
 class Evaluation3D(ABC):
     def __init__(self, config, pipeline, dataloader, tb_summary, accelerator):
@@ -30,39 +31,21 @@ class Evaluation3D(ABC):
             metrics[metric] = 0
         num_iterations = 0
 
+        
+        self.progress_bar = tqdm(total=len(self.dataloader), disable=not self.accelerator.is_local_main_process) 
+        self.progress_bar.set_description(f"Evaluation 3D") 
+
         print("Start 3D evaluation")
         for batch in self.dataloader:
             # go through sample in batch
             for sample_idx in torch.arange(batch["gt_image"].shape[0]):
-                clean_images = batch["gt_image"][sample_idx] #torch.Size([1, 256, 256, 256])
-                masks = batch["mask"][sample_idx]  #torch.Size([1, 256, 256, 256])
+                
                 max_v = batch["max_v"][sample_idx]
                 idx = batch["idx"][sample_idx]
                 name = batch["name"][sample_idx]
-                image_shape = batch["original_shape"][sample_idx]
-            
-                #get slices which have to be modified
-                slice_indices = []
-                for slice_idx in torch.arange(clean_images.shape[2]):
-                    if (masks[:, :, slice_idx, :]).any():
-                        slice_indices.append(slice_idx.unsqueeze(0)) 
-                slice_indices = torch.cat(slice_indices, 0)
-            
-                #create chunks of slices which have to be modified
-                stacked_images = torch.stack((clean_images[:, :, slice_indices, :], masks[:, :, slice_indices, :]), dim=0)
-                stacked_images = stacked_images.permute(0, 3, 1, 2, 4) 
-                chunks = torch.chunk(stacked_images, math.ceil(stacked_images.shape[1]/self.config.eval_batch_size), dim=1)
-                
-                #modify all slices
-                images = [] 
-                for chunk in chunks:
-                    chunk_images = chunk[0]
-                    chunk_masks = chunk[1]
+                image_shape = batch["original_shape"][sample_idx] 
 
-                    new_images = self._start_pipeline(chunk_images, chunk_masks, parameters)
-
-                    images.append(new_images)
-                images = torch.cat(images, dim=0)
+                images, clean_images, slice_indices, masks = self._start_pipeline(batch, sample_idx, parameters)    
                 images = images.permute(3, 1, 0, 2) 
             
                 #overwrite the original 3D image with the modified 2D slices
@@ -80,10 +63,12 @@ class Evaluation3D(ABC):
                 num_iterations += 1
             
                 #postprocess and save image as nifti file
-                final_3d_images = DatasetMRI.postprocess(final_3d_images, max_v, image_shape = image_shape)  
+                final_3d_images = DatasetMRI.postprocess(final_3d_images, max_v, reference_shape = image_shape)  
                 save_dir = os.path.join(self.config.output_dir, f"samples_3D/{name}") 
                 os.makedirs(save_dir, exist_ok=True)
                 DatasetMRI.save(final_3d_images, f"{save_dir}/T1.nii.gz", **self.dataloader.dataset.get_metadata(int(idx)))
+
+            self.progress_bar.update(1)
         
         # calculcate mean of metrics and log them
         for key, value in metrics.items():

@@ -11,9 +11,10 @@ import random
 from skimage.metrics import structural_similarity, mean_squared_error
 import torch
 from torcheval.metrics import PeakSignalNoiseRatio
-from torchvision.transforms.functional import to_pil_image
 from torchvision.ops import masks_to_boxes
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
+from torchvision.transforms.functional import to_pil_image
+from tqdm.auto import tqdm
 
 class Evaluation2D(ABC):
     def __init__(self, config, pipeline, dataloader, tb_summary, accelerator, train_env):
@@ -58,7 +59,7 @@ class Evaluation2D(ABC):
         for image_list, title in zip(images, titles): 
             image_grid = make_image_grid(image_list, rows=int(len(image_list)**0.5), cols=int(len(image_list)**0.5))
             image_grid.save(f"{path}/{title}_{global_step:07d}.png")
-        print("image saved")
+        print("image saved") 
 
     @abstractmethod
     def _start_pipeline(self, clean_images, masks, parameters):
@@ -71,10 +72,13 @@ class Evaluation2D(ABC):
         for metric in metric_list:
             metrics[metric] = 0 
          
+        self.progress_bar = tqdm(total=len(self.dataloader), disable=not self.accelerator.is_local_main_process) 
+        self.progress_bar.set_description(f"Evaluation 2D") 
+
         self._reset_seed(self.config.seed)
         for n_iter, batch in enumerate(self.dataloader): 
-            if n_iter >= self.config.evaluate_num_batches:
-                break
+            if (self.config.evaluate_num_batches != -1) and (n_iter >= self.config.evaluate_num_batches):
+                break 
              
             # calc validation loss
             input, noise, timesteps = self.train_env._get_training_input(batch)  
@@ -85,13 +89,10 @@ class Evaluation2D(ABC):
             #free up memory
             del input, noise, timesteps, noise_pred, loss, all_loss 
             torch.cuda.empty_cache()
-             
-            # get batch
-            clean_images = batch["gt_image"]
-            masks = batch["mask"] 
-            images = self._start_pipeline( 
-                clean_images,
-                masks, 
+            
+            # run pipeline. The returned masks can be either existing lesions or the synthetic ones
+            images, clean_images, masks = self._start_pipeline( 
+                batch,
                 parameters
             )
 
@@ -107,6 +108,8 @@ class Evaluation2D(ABC):
             for key, value in new_metrics.items(): 
                 metrics[key] += value
 
+            self.progress_bar.update(1)
+
         
         # calculate average metrics
         for key, value in metrics.items():
@@ -117,17 +120,11 @@ class Evaluation2D(ABC):
             EvaluationUtils.log_metrics(self.tb_summary, global_step, metrics)
 
             # save last batch as sample images
-            masked_images = clean_images*(1-masks)
-            
-            # change range from [-1,1] to [0,1]
-            images = (images+1)/2
-            masked_images = (masked_images+1)/2
-            clean_images = (clean_images+1)/2
-            # change binary image from 0,1 to 0,255
-            masks = masks*255
-
-            # save images
-            list = [images, masked_images, clean_images, masks]
-            title_list = ["images", "masked_images", "clean_images", "masks"] 
+            list, title_list = self._get_image_lists(images, clean_images, masks, batch)
             image_list = [[to_pil_image(x, mode="L") for x in images] for images in list]
             self._save_image(image_list, title_list, os.path.join(self.config.output_dir, "samples_2D"), global_step)
+
+            
+            
+
+    
