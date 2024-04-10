@@ -113,7 +113,10 @@ class Evaluation2D(ABC):
         
         # calculate average metrics
         for key, value in metrics.items():
-            metrics[key] /= self.config.evaluate_num_batches 
+            if self.config.evaluate_num_batches == -1:
+                metrics[key] /= len(self.dataloader)
+            else:
+                metrics[key] /= self.config.evaluate_num_batches
 
         if self.accelerator.is_main_process:
             # log metrics
