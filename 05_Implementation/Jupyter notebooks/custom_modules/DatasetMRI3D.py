@@ -9,8 +9,8 @@ from scipy.ndimage import label
 from tqdm.auto import tqdm
 
 class DatasetMRI3D(DatasetMRI):
-    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, directDL: bool = True, seed: int = None, only_connected_masks: bool = True):
-        super().__init__(root_dir_img, root_dir_segm, root_dir_masks, directDL, seed, only_connected_masks)
+    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, root_dir_synthesis: Path = None, directDL: bool = True, seed: int = None, only_connected_masks: bool = True):
+        super().__init__(root_dir_img, root_dir_segm, root_dir_masks, root_dir_synthesis, directDL, seed, only_connected_masks)
 
 
         idx=0 
@@ -42,7 +42,8 @@ class DatasetMRI3D(DatasetMRI):
                             self.list_paths_segm[i] if self.list_paths_segm else None, 
                             self.list_paths_masks[i][idx_mask] if self.list_paths_masks else None,
                             path_component_matrix if only_connected_masks else None,
-                            list_component_labels if only_connected_masks else None)   
+                            list_component_labels if only_connected_masks else None,
+                            self.list_paths_synthesis[i] if self.list_paths_synthesis else None,)   
                         idx += 1
                 else:
                     self.idx_to_element[idx]=(
@@ -50,7 +51,8 @@ class DatasetMRI3D(DatasetMRI):
                         self.list_paths_segm[i] if self.list_paths_segm else None, 
                         self.list_paths_masks[i][idx_mask] if self.list_paths_masks else None,
                         None,
-                        None) 
+                        None,
+                        self.list_paths_synthesis[i] if self.list_paths_synthesis else None,) 
                     idx += 1
 
                 if(self.list_paths_masks and len(self.list_paths_masks[i])-1>idx_mask):
@@ -65,6 +67,7 @@ class DatasetMRI3D(DatasetMRI):
             if self.only_connected_masks:
                 component_matrix_path = self.idx_to_element[idx][3]
                 components = self.idx_to_element[idx][4]
+            synthesis_path = self.idx_to_element[idx][5]
 
             # load t1n img
             t1n_img = nib.load(t1n_path)
@@ -113,15 +116,24 @@ class DatasetMRI3D(DatasetMRI):
                 mask = self._padding(mask.to(torch.uint8))
             else:
                 mask = torch.empty(0)
+
+            if(synthesis_path):
+                synthesis_mask = nib.load(synthesis_path)
+                synthesis_mask = synthesis_mask.get_fdata()
+                synthesis_mask = torch.Tensor(synthesis_mask)
+                synthesis_mask = self._padding(synthesis_mask.to(torch.uint8))
+            else:
+                synthesis_mask = torch.empty(0) 
             
             # Output data
             sample_dict = {
                 "gt_image": t1n_img.unsqueeze(0), 
                 "segm": t1n_segm, 
-                "mask": mask.unsqueeze(0), 
+                "mask": mask.unsqueeze(0),
+                "synthesis": synthesis_mask.unsqueeze(0),
                 "max_v": t1n_max_v, 
                 "idx": int(idx), 
                 "name": t1n_path.parent.stem,
-                "original_shape": t1n_img_orig.shape 
+                "original_shape": [t1n_img_orig.shape]
             } 
             return sample_dict

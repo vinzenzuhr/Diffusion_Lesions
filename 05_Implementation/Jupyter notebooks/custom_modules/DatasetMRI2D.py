@@ -9,8 +9,13 @@ import os
 from tqdm.auto import tqdm
 
 class DatasetMRI2D(DatasetMRI):
-    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, directDL: bool = True, seed: int = None, only_connected_masks: bool = True):
-        super().__init__(root_dir_img, root_dir_segm, root_dir_masks, directDL, seed, only_connected_masks)
+    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, root_dir_synthesis: Path = None, directDL: bool = True, seed: int = None, only_connected_masks: bool = True, axis_augmentation: bool = False):
+        super().__init__(root_dir_img, root_dir_segm, root_dir_masks, root_dir_synthesis, directDL, seed, only_connected_masks)
+        self.axis_augmentation = axis_augmentation
+        
+        if(root_dir_synthesis and not root_dir_masks):
+            raise ValueError(f"If root_dir_masks_synthesis is given, then root_dir_masks is mandatory")
+
 
         # go through all 3D segmentation and add relevant 2D slices to dict
         idx=0
@@ -42,10 +47,24 @@ class DatasetMRI2D(DatasetMRI):
                                 if (torch.count_nonzero(component_matrix[:,idx_slice,:]==component) >= min_area):
                                     relevant_components.append(component)
                             if len(relevant_components) > 0:
-                                self.idx_to_element[idx]=(self.list_paths_t1n[j], self.list_paths_segm[j] if self.list_paths_segm else None, path_mask, path_component_matrix, relevant_components, idx_slice)
+                                self.idx_to_element[idx]=(
+                                    self.list_paths_t1n[j], 
+                                    self.list_paths_segm[j] if self.list_paths_segm else None, 
+                                    path_mask, 
+                                    path_component_matrix, 
+                                    relevant_components,
+                                    self.list_paths_synthesis[j] if self.list_paths_synthesis else None,
+                                    idx_slice)
                                 idx+=1
                         else:
-                            self.idx_to_element[idx]=(self.list_paths_t1n[j], self.list_paths_segm[j] if self.list_paths_segm else None, path_mask, None, None, idx_slice)
+                            self.idx_to_element[idx]=(
+                                self.list_paths_t1n[j], 
+                                self.list_paths_segm[j] if self.list_paths_segm else None, 
+                                path_mask, 
+                                None, 
+                                None, 
+                                self.list_paths_synthesis[j] if self.list_paths_synthesis else None,
+                                idx_slice)
                             idx+=1
             else:
                 # if there are no masks, but a segmentation mask restrict slices to white matter regions
@@ -77,6 +96,7 @@ class DatasetMRI2D(DatasetMRI):
                         None, 
                         None,
                         0,
+                        0,
                         bottom+i)
                     idx+=1
                 
@@ -87,7 +107,8 @@ class DatasetMRI2D(DatasetMRI):
             if self.only_connected_masks:
                 component_matrix_path = self.idx_to_element[idx][3]
                 components = self.idx_to_element[idx][4]
-            slice_idx = self.idx_to_element[idx][5]
+            synthesis_path = self.idx_to_element[idx][5]
+            slice_idx = self.idx_to_element[idx][6]
 
             # load t1n img
             t1n_img = nib.load(t1n_path)
@@ -142,12 +163,22 @@ class DatasetMRI2D(DatasetMRI):
                 mask_slice = mask[:,slice_idx,:] 
             else:
                 mask_slice = torch.empty(0)   
-                            
+            
+            if(synthesis_path):
+                synthesis_mask = nib.load(synthesis_path)
+                synthesis_mask = synthesis_mask.get_fdata()
+                synthesis_mask = torch.Tensor(synthesis_mask)
+                synthesis_mask = self._padding(synthesis_mask.to(torch.uint8))
+                synthesis_slice = synthesis_mask[:,slice_idx,:]
+            else:
+                synthesis_slice = torch.empty(0)
+
             # Output data
             sample_dict = {
                 "gt_image": t1n_slice.unsqueeze(0),
                 "segm": t1n_segm_slice, 
                 "mask": mask_slice.unsqueeze(0),
+                "synthesis": synthesis_slice.unsqueeze(0),
                 "max_v": t1n_max_v,
                 "idx": int(idx),
                 "name": t1n_path.parent.stem,

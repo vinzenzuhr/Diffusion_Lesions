@@ -37,7 +37,7 @@ class DatasetMRI(Dataset):
 
     pad_shape = (256,256,256)
 
-    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, directDL: bool = True, seed: int = None, only_connected_masks: bool = False):
+    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, root_dir_synthesis: Path = None, directDL: bool = True, seed: int = None, only_connected_masks: bool = False):
         #Initialize variables
         self.root_dir_img = root_dir_img 
         self.directDL = directDL
@@ -53,6 +53,10 @@ class DatasetMRI(Dataset):
             self.list_paths_segm = list(root_dir_segm.rglob("*.nii.gz"))
         else:
             self.list_paths_segm = None 
+        if(root_dir_synthesis):
+            self.list_paths_synthesis = list(root_dir_synthesis.rglob("*.nii.gz"))
+        else:
+            self.list_paths_synthesis = None 
         self.list_paths_t1n = list(root_dir_img.rglob("*.nii.gz"))
         self.idx_to_element = dict()
         self.seed = seed  
@@ -61,8 +65,10 @@ class DatasetMRI(Dataset):
         if(root_dir_segm and (len(self.list_paths_t1n) != len(self.list_paths_segm))):
             raise ValueError(f"The amount of T1n files and segm files must be the same. Got {len(self.list_paths_t1n)} and {len(self.list_paths_segm)}")        
         if(root_dir_masks and (len(self.list_paths_t1n)!= len(self.list_paths_masks))):
-            raise ValueError(f"The amount of T1n files and mask folders must be the same. Got {len(self.list_paths_t1n)} and {len(self.list_paths_masks)}") 
-
+            raise ValueError(f"The amount of T1n files and mask folders must be the same. Got {len(self.list_paths_t1n)} and {len(self.list_paths_masks)}")    
+        if(root_dir_synthesis and (len(self.list_paths_t1n)!= len(self.list_paths_synthesis))):
+            raise ValueError(f"The amount of T1n files and mask synthesis files must be the same. Got {len(self.list_paths_t1n)} and {len(self.list_paths_synthesis)}") 
+        
     def __len__(self): 
         return len(self.idx_to_element.keys()) 
 
