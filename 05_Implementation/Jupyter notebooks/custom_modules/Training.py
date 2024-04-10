@@ -98,6 +98,7 @@ class Training(ABC):
         self.tb_summary.add_text("noise_scheduler", self.config.noise_scheduler, 0) #config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
         self.tb_summary.add_text("lr_scheduler", self.config.lr_scheduler, 0) #config.lr_scheduler = "cosine_schedule_with_warmup"
         self.tb_summary.add_text("conditional_data", self.config.conditional_data, 0) #config.conditional_data = "Lesions"
+        self.tb_summary.add_text("add_lesion_technique", self.config.add_lesion_technique, 0)
 
     def _reset_seed(self, worker_id=0): 
         np.random.seed(self.config.seed) 
