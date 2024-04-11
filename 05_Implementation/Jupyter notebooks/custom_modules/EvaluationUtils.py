@@ -1,5 +1,6 @@
 import torch
 from skimage.metrics import structural_similarity
+import os
  
 def calc_metrics(images1, images2, masks):
     batch_size = images1.shape[0]
@@ -47,7 +48,7 @@ def calc_metrics(images1, images2, masks):
         
     return metrics
 
-def log_metrics(tb_summary, global_step, metrics):
+def log_metrics(tb_summary, global_step, metrics, config):
     """
     Log metrics to tensorboard and print them to console
 
@@ -60,4 +61,11 @@ def log_metrics(tb_summary, global_step, metrics):
     for key, value in metrics.items():
         print(f"{key}: {value}")
         tb_summary.add_scalar(key, value, global_step)
-    print("global_step: ", global_step) 
+    print("global_step: ", global_step)
+
+    if config.log_csv:
+        with open(os.path.join(config.output_dir, "metrics.csv"), "a") as f:
+            for key, value in metrics.items():
+                f.write(f"{key}:{value},")
+            f.write(f"global_step:{global_step}")
+            f.write("\n")

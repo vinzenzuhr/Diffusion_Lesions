@@ -11,7 +11,19 @@ import torch.nn.functional as F
 from tqdm.auto import tqdm
 
 class Training(ABC):
-    def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory):
+    def __init__(
+            self, 
+            config, 
+            model, 
+            noise_scheduler, 
+            optimizer, 
+            lr_scheduler, 
+            datasetTrain, 
+            datasetEvaluation, 
+            dataset3DEvaluation, 
+            evaluation2D, 
+            evaluation3D, 
+            pipelineFactory):
         self.config = config
         self.model = model
         self.noise_scheduler = noise_scheduler
@@ -19,7 +31,7 @@ class Training(ABC):
         self.lr_scheduler = lr_scheduler  
         self.evaluation2D = evaluation2D
         self.evaluation3D = evaluation3D
-        self.pipelineFactory = pipelineFactory
+        self.pipelineFactory = pipelineFactory 
 
         self.accelerator = Accelerator(
             mixed_precision=config.mixed_precision,
@@ -81,24 +93,45 @@ class Training(ABC):
 
     def _meta_logs(self):
         #log at tensorboard
-        self.tb_summary.add_scalar("image_size", self.config.image_size, 0)
-        self.tb_summary.add_scalar("train_batch_size", self.config.train_batch_size, 0)
-        self.tb_summary.add_scalar("eval_batch_size", self.config.eval_batch_size, 0)
-        self.tb_summary.add_scalar("num_epochs", self.config.num_epochs, 0)
-        self.tb_summary.add_scalar("learning_rate", self.config.learning_rate, 0)
-        self.tb_summary.add_scalar("lr_warmup_steps", self.config.lr_warmup_steps, 0)
-        self.tb_summary.add_scalar("evaluate_epochs", self.config.evaluate_epochs, 0)
-        self.tb_summary.add_scalar("evaluate_3D_epochs", self.config.evaluate_3D_epochs, 0) 
-        self.tb_summary.add_text("mixed_precision", self.config.mixed_precision, 0) 
-        self.tb_summary.add_scalar("train_only_connected_masks", self.config.train_only_connected_masks, 0)
-        self.tb_summary.add_scalar("eval_only_connected_masks", self.config.eval_only_connected_masks, 0) 
-        self.tb_summary.add_scalar("debug", self.config.debug, 0) 
-        self.tb_summary.add_text("mode", self.config.mode, 0) 
-        self.tb_summary.add_text("model", self.config.model, 0) #config.model = "UNet2DModel"
-        self.tb_summary.add_text("noise_scheduler", self.config.noise_scheduler, 0) #config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
-        self.tb_summary.add_text("lr_scheduler", self.config.lr_scheduler, 0) #config.lr_scheduler = "cosine_schedule_with_warmup"
-        self.tb_summary.add_text("conditional_data", self.config.conditional_data, 0) #config.conditional_data = "Lesions"
-        self.tb_summary.add_text("add_lesion_technique", self.config.add_lesion_technique, 0)
+        scalars = [
+            "image_size",
+            "train_batch_size",
+            "eval_batch_size",
+            "num_epochs",
+            "learning_rate",
+            "lr_warmup_steps",
+            "evaluate_epochs",
+            "evaluate_num_batches",
+            "evaluate_3D_epochs",
+            "train_only_connected_masks",
+            "eval_only_connected_masks",
+            "debug",]
+        if hasattr(self.config, "intermediate_timestep"):
+            scalars.append("intermediate_timestep")
+        texts = [
+            "mixed_precision",
+            "mode",
+            "model",
+            "noise_scheduler",
+            "lr_scheduler",
+            "conditional_data",]
+        if hasattr(self.config, "add_lesion_technique"):
+            texts.append("add_lesion_technique")
+
+
+        for scalar in scalars:
+            self.tb_summary.add_scalar(scalar, getattr(self.config, scalar), 0)
+        for text in texts:
+            self.tb_summary.add_text(text, getattr(self.config, text), 0)
+
+        if self.config.log_csv:
+            with open(os.path.join(self.config.output_dir, "metrics.csv"), "w") as f:
+                for scalar in scalars:
+                    f.write(f"{scalar}:{getattr(self.config, scalar)},")
+                for text in texts:
+                    f.write(f"{text}:{getattr(self.config, text)},")
+                f.write("\n")
+
 
     def _reset_seed(self, worker_id=0): 
         np.random.seed(self.config.seed) 

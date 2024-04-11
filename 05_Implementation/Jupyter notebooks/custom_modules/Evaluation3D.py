@@ -79,6 +79,6 @@ class Evaluation3D(ABC):
         for key, value in metrics.items():
             dim3_metrics[f"{key}_3D"] = value
         if self.accelerator.is_main_process: 
-            EvaluationUtils.log_metrics(self.tb_summary, global_step, dim3_metrics)
+            EvaluationUtils.log_metrics(self.tb_summary, global_step, dim3_metrics, self.config)
 
         print("3D evaluation finished")

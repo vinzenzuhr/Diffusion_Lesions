@@ -120,7 +120,7 @@ class Evaluation2D(ABC):
 
         if self.accelerator.is_main_process:
             # log metrics
-            EvaluationUtils.log_metrics(self.tb_summary, global_step, metrics)
+            EvaluationUtils.log_metrics(self.tb_summary, global_step, metrics, self.config)
 
             # save last batch as sample images
             list, title_list = self._get_image_lists(images, clean_images, masks, batch)
