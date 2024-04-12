@@ -25,9 +25,9 @@ class TrainingConfig:
     learning_rate = 1e-4
     lr_warmup_steps = 500
     evaluate_epochs = 5 # adjust to num_epochs
-    evaluate_num_batches = -1 # ~3s/batch. 7 min/Evaluation 2D&3D epoch with all batches  
+    evaluate_num_batches = -1 # ~3s/batch. 2.5 min/Evaluation 3D epoch with all batchesr
     deactivate3Devaluation = False
-    evaluate_3D_epochs = 1000  # one 3D evaluation has 77 slices and needs 166min
+    evaluate_3D_epochs = 1000  # 3 min/Evaluation 3D
     save_model_epochs = 100
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
     output_dir = "lesion-synthesis-256-unconditioned"  # the model name locally and on the HF Hub
@@ -40,9 +40,10 @@ class TrainingConfig:
     train_only_connected_masks=False  # No Training with lesion masks
     eval_only_connected_masks=False 
     num_inference_steps=50
+    log_csv = True
     add_lesion_technique = "mean_intensity" # 'mean_intensity' or 'other_lesions'
-    intermediate_timestep = 25
-    mode = "eval" # 'train' or 'eval'
+    intermediate_timestep = 25 # starting from this timesteps. num_inference_steps means the whole pipeline and 1 the last step. 
+    mode = "eval" # 'train', 'eval' or "tuning_timestep"
     debug = True 
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub 
@@ -54,9 +55,9 @@ config = TrainingConfig()
 
 
 if config.debug:
-    #config.num_inference_steps = 1
+    config.num_inference_steps = 1
     config.train_batch_size = 1
-    config.eval_batch_size = 1 
+    config.eval_batch_size = 1
     config.train_only_connected_masks=False
     config.eval_only_connected_masks=False
     config.evaluate_num_batches = 1
@@ -69,6 +70,14 @@ if config.debug:
 # In[4]:
 
 
+config.deactivate3Devaluation = True
+config.num_inference_steps = 50
+config.intermediate_timestep = 1
+
+
+# In[5]:
+
+
 #setup huggingface accelerate
 import torch
 import numpy as np
@@ -76,7 +85,7 @@ import accelerate
 accelerate.commands.config.default.write_basic_config(config.mixed_precision)
 
 
-# In[5]:
+# In[6]:
 
 
 from DatasetMRI2D import DatasetMRI2D
@@ -91,35 +100,41 @@ dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), 
 
 # ### Finding good intensity of lesions
 
-# from pathlib import Path
-# import nibabel as nib
-# from tqdm.auto import tqdm
-# from DatasetMRI3D import DatasetMRI3D 
-# 
-# t1w_norm_noskull_list = list(Path("temp/unhealthy_DL+DiReCT_Segmentation").rglob("*T1w_norm_noskull.nii.gz"))
-# lesion_list = list(Path("temp/unhealthy_registered_lesions").rglob("*transformed_lesion.nii.gz"))
-# 
-# t1ws = list()
-# lesions = list()
-# for i in tqdm(range(len(t1w_norm_noskull_list))):
-#     t1w = nib.load(t1w_norm_noskull_list[i])
-#     t1w = t1w.get_fdata()
-#     t1w, _ = DatasetMRI3D.preprocess(t1w)
-#     lesion = nib.load(lesion_list[i])
-#     lesion = lesion.get_fdata()
-#     lesion = DatasetMRI3D._padding(torch.from_numpy(lesion).to(torch.uint8))
-#     #means.append(t1w[lesion.to(torch.bool)].mean())
-#     #stds.append(t1w[lesion.to(torch.bool)].std())
-#     t1ws.append(t1w)
-#     lesions.append(lesion)
-# t1w_big = torch.cat(t1ws)
-# lesion_big = torch.cat(lesions)
-# 
-# print("mean lesion intensity: ", t1w_big[lesion_big.to(torch.bool)].mean()) # -0.3572
-# print("std lesion intensity: ", t1w_big[lesion_big.to(torch.bool)].std()) # 0.1829
-# print("median lesion intensity: ", t1w_big[lesion_big.to(torch.bool)].median()) # 0.1829
+# In[7]:
 
-# In[6]:
+
+from pathlib import Path
+import nibabel as nib
+from tqdm.auto import tqdm
+from DatasetMRI3D import DatasetMRI3D 
+
+#skip to speed up
+if False:
+    t1w_norm_noskull_list = list(Path("temp/unhealthy_DL+DiReCT_Segmentation").rglob("*T1w_norm_noskull.nii.gz"))
+    lesion_list = list(Path("temp/unhealthy_registered_lesions").rglob("*transformed_lesion.nii.gz"))
+    
+    t1ws = list()
+    lesions = list()
+    for i in tqdm(range(len(t1w_norm_noskull_list))):
+        t1w = nib.load(t1w_norm_noskull_list[i])
+        t1w = t1w.get_fdata()
+        t1w, _ = DatasetMRI3D.preprocess(t1w)
+        lesion = nib.load(lesion_list[i])
+        lesion = lesion.get_fdata()
+        lesion = DatasetMRI3D._padding(torch.from_numpy(lesion).to(torch.uint8))
+        #means.append(t1w[lesion.to(torch.bool)].mean())
+        #stds.append(t1w[lesion.to(torch.bool)].std())
+        t1ws.append(t1w)
+        lesions.append(lesion)
+    t1w_big = torch.cat(t1ws)
+    lesion_big = torch.cat(lesions)
+    
+    print("mean lesion intensity: ", t1w_big[lesion_big.to(torch.bool)].mean()) # -0.3572
+    print("std lesion intensity: ", t1w_big[lesion_big.to(torch.bool)].std()) # 0.1829
+    print("median lesion intensity: ", t1w_big[lesion_big.to(torch.bool)].median()) # 0.1829
+
+
+# In[8]:
 
 
 import matplotlib.pyplot as plt 
@@ -144,7 +159,7 @@ fig.show()
 
 # ### Training
 
-# In[7]:
+# In[9]:
 
 
 #create model
@@ -177,7 +192,7 @@ model = UNet2DModel(
 config.model = "UNet2DModel"
 
 
-# In[8]:
+# In[10]:
 
 
 #setup noise scheduler
@@ -190,7 +205,7 @@ noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
 config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
 
 
-# In[9]:
+# In[11]:
 
 
 # setup lr scheduler
@@ -206,7 +221,7 @@ lr_scheduler = get_cosine_schedule_with_warmup(
 config.lr_scheduler = "cosine_schedule_with_warmup"
 
 
-# In[10]:
+# In[12]:
 
 
 from TrainingUnconditional import TrainingUnconditional
@@ -233,14 +248,14 @@ args = {
 trainingSynthesis = TrainingUnconditional(**args) 
 
 
-# In[11]:
+# In[13]:
 
 
 if config.mode == "train":
     trainingSynthesis.train()
 
 
-# In[12]:
+# In[14]:
 
 
 if config.mode == "eval":
@@ -251,7 +266,46 @@ if config.mode == "eval":
 # In[ ]:
 
 
+
+
+
+# In[ ]:
+
+
+
+
+
+# In[ ]:
+
+
+if config.mode == "tuning_timestep":
+    pipeline = DDIMGuidedPipeline.from_pretrained(config.output_dir)
+    original_output_dir = config.output_dir 
+    timesteps = [1,5,10,15,20,25,30]
+    for t in timesteps:
+        config.intermediate_timestep = t
+        config.output_dir = original_output_dir + "_" + str(t)
+        args = {
+            "config": config, 
+            "model": model, 
+            "noise_scheduler": noise_scheduler, 
+            "optimizer": optimizer, 
+            "lr_scheduler": lr_scheduler, 
+            "datasetTrain": datasetTrain, 
+            "datasetEvaluation": datasetEvaluation, 
+            "dataset3DEvaluation": dataset3DEvaluation, 
+            "evaluation2D": Evaluation2DSynthesis,
+            "evaluation3D": Evaluation3DSynthesis, 
+            "pipelineFactory": PipelineFactories.get_ddim_guided_pipeline, 
+            "deactivate3Devaluation": config.deactivate3Devaluation} 
+        trainingSynthesis = TrainingUnconditional(**args) 
+        trainingSynthesis.evaluate(pipeline)
+
+
+# In[ ]:
+
+
 print("Finished Training")
 
 
-# In[13]:
+# In[ ]:
