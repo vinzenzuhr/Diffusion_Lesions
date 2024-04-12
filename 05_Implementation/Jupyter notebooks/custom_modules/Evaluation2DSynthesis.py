@@ -13,7 +13,7 @@ class Evaluation2DSynthesis(Evaluation2D):
         if self.config.add_lesion_technique == "mean_intensity":
             lesion_intensity = -0.5492 
         elif self.config.add_lesion_technique == "other_lesions":
-            masks = batch["gt_mask"]
+            masks = batch["mask"]
             lesion_intensity = clean_images[masks.to(torch.bool)].mean()
             print("mean lesion intensity: ", lesion_intensity)
         else:
