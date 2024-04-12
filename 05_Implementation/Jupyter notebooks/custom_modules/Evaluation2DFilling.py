@@ -3,8 +3,8 @@ import torch
 import numpy as np 
 
 class Evaluation2DFilling(Evaluation2D):
-    def __init__(self, config, pipeline, dataloader, tb_summary, accelerator, train_env):
-        super().__init__(config, pipeline, dataloader, tb_summary, accelerator, train_env) 
+    def __init__(self, config, pipeline, dataloader, tb_summary, accelerator, _get_training_input):
+        super().__init__(config, pipeline, dataloader, tb_summary, accelerator, _get_training_input) 
     
     def _get_image_lists(self, images, clean_images, masks, batch):
         # save last batch as sample images
@@ -31,12 +31,11 @@ class Evaluation2DFilling(Evaluation2D):
         inpainted_images = self.pipeline(
             voided_images,
             masks,
-            generator=torch.cuda.manual_seed_all(self.config.seed),
-            output_type=np.array,
+            generator=torch.cuda.manual_seed_all(self.config.seed), 
             num_inference_steps = self.config.num_inference_steps,
             **parameters
         ).images
         print(3) 
-        inpainted_images = torch.from_numpy(inpainted_images).to(clean_images.device) 
+        #inpainted_images = torch.from_numpy(inpainted_images).to(clean_images.device) 
         return inpainted_images, clean_images, masks
     

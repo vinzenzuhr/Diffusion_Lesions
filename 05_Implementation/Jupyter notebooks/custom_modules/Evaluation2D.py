@@ -17,13 +17,13 @@ from torchvision.transforms.functional import to_pil_image
 from tqdm.auto import tqdm
 
 class Evaluation2D(ABC):
-    def __init__(self, config, pipeline, dataloader, tb_summary, accelerator, train_env):
+    def __init__(self, config, pipeline, dataloader, tb_summary, accelerator, _get_training_input):
         self.config = config
         self.pipeline = pipeline
         self.dataloader = dataloader
         self.tb_summary = tb_summary
         self.accelerator = accelerator
-        self.train_env = train_env 
+        self._get_training_input = _get_training_input 
         self.lpips_metric = LearnedPerceptualImagePatchSimilarity(net_type='alex').to(self.accelerator.device)
 
     def _calc_lpip(self, images_1, images_2):
@@ -81,7 +81,7 @@ class Evaluation2D(ABC):
                 break 
              
             # calc validation loss
-            input, noise, timesteps = self.train_env._get_training_input(batch)  
+            input, noise, timesteps = self._get_training_input(batch)  
             noise_pred = self.pipeline.unet(input, timesteps, return_dict=False)[0] # kernel dies
             loss = F.mse_loss(noise_pred, noise)          
             all_loss = self.accelerator.gather_for_metrics(loss).mean() 
@@ -97,7 +97,7 @@ class Evaluation2D(ABC):
             )
 
             # transform from B x H x W x C to B x C x H x W 
-            images = torch.permute(images, (0, 3, 1, 2))
+            #images = torch.permute(images, (0, 3, 1, 2))
 
             # calculate metrics
             all_clean_images = self.accelerator.gather_for_metrics(clean_images)

@@ -31,7 +31,7 @@ class TrainingUnconditional(Training):
                 self.d2_eval_dataloader, 
                 None if not self.accelerator.is_main_process else self.tb_summary, 
                 self.accelerator,
-                self)
+                self._get_training_input)
             eval.evaluate(
                 self.global_step, 
                 parameters = self.evaluation_pipeline_parameters)

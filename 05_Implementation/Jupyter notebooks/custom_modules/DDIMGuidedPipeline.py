@@ -36,8 +36,7 @@ class DDIMGuidedPipeline(DiffusionPipeline):
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         eta: float = 0.0,
         num_inference_steps: int = 50,
-        use_clipped_model_output: Optional[bool] = None,
-        output_type: Optional[str] = "pil",
+        use_clipped_model_output: Optional[bool] = None, 
         return_dict: bool = True,
     ) -> Union[ImagePipelineOutput, Tuple]:
         r"""
@@ -91,15 +90,18 @@ class DDIMGuidedPipeline(DiffusionPipeline):
                 f" size of {batch_size}. Make sure the batch size matches the length of the generators."
             )
 
+        noise = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)
 
-        noise = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)  
+        #noise = torch.randn(guiding_imgs.shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)  
 
         # set number of inference timesteps
         self.scheduler.set_timesteps(num_inference_steps)
 
-        # create noisy images at given timestep 
-        image = self.scheduler.add_noise(guiding_imgs, noise, torch.tensor(timestep, device=guiding_imgs.device))    
-        for t in self.scheduler.timesteps[timestep:]: 
+        # create noisy images at given timestep
+        reverse_timestep = num_inference_steps - timestep
+        DDPM_timestep = self.scheduler.timesteps[reverse_timestep] 
+        image = self.scheduler.add_noise(guiding_imgs, noise, DDPM_timestep)    
+        for t in self.scheduler.timesteps[reverse_timestep:]: 
             # 1. predict noise model_output
             model_output = self.unet(image, t).sample
 
@@ -111,10 +113,7 @@ class DDIMGuidedPipeline(DiffusionPipeline):
             ).prev_sample   
 
         
-        image = image.clamp(-1, 1).cpu().permute(0, 2, 3, 1).numpy()
-        if output_type == "pil":
-            image = (image / 2 + 0.5)
-            image = self.numpy_to_pil(image)
+        image = image.clamp(-1, 1)#.permute(0, 2, 3, 1)#.cpu().numpy() 
 
         if not return_dict:
             return (image,)

@@ -34,12 +34,11 @@ class Evaluation3DFilling(Evaluation3D):
             new_images = self.pipeline(
                 chunk_voided_images,
                 chunk_masks,
-                generator=torch.cuda.manual_seed_all(self.config.seed),
-                output_type=np.array,
+                generator=torch.cuda.manual_seed_all(self.config.seed), 
                 num_inference_steps = self.config.num_inference_steps,
                 **parameters
             ).images
-            new_images = torch.from_numpy(new_images).to(clean_images.device) 
+            #new_images = torch.from_numpy(new_images).to(clean_images.device) 
             images.append(new_images)
         images = torch.cat(images, dim=0)
 

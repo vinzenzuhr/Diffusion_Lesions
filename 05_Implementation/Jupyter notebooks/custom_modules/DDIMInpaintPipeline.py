@@ -36,8 +36,7 @@ class DDIMInpaintPipeline(DiffusionPipeline):
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         eta: float = 0.0,
         num_inference_steps: int = 50,
-        use_clipped_model_output: Optional[bool] = None,
-        output_type: Optional[str] = "pil",
+        use_clipped_model_output: Optional[bool] = None, 
         return_dict: bool = True,
     ) -> Union[ImagePipelineOutput, Tuple]:
         r"""
@@ -112,14 +111,10 @@ class DDIMInpaintPipeline(DiffusionPipeline):
 
             #3. Concatenate image with voided images and masks
             input=torch.cat((image, voided_imgs, masks), dim=1)
-
-        print(image.max(), image.min())
+ 
 
         
-        image = image.clamp(-1, 1).cpu().permute(0, 2, 3, 1).numpy()
-        if output_type == "pil":
-            image = (image / 2 + 0.5)
-            image = self.numpy_to_pil(image)
+        image = image.clamp(-1, 1)#.permute(0, 2, 3, 1)#.cpu().numpy() 
 
         if not return_dict:
             return (image,)
