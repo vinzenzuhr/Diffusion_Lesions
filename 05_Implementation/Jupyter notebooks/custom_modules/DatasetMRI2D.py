@@ -181,6 +181,7 @@ class DatasetMRI2D(DatasetMRI):
                 "synthesis": synthesis_slice.unsqueeze(0),
                 "max_v": t1n_max_v,
                 "idx": int(idx),
+                "slice_idx": int(slice_idx),
                 "name": t1n_path.parent.stem,
             } 
             return sample_dict 
