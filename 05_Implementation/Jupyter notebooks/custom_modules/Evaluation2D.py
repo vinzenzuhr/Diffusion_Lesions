@@ -8,6 +8,7 @@ from pathlib import Path
 import torch.nn.functional as F
 import PIL 
 import random
+import math
 from skimage.metrics import structural_similarity, mean_squared_error
 import torch
 from torcheval.metrics import PeakSignalNoiseRatio
@@ -57,7 +58,13 @@ class Evaluation2D(ABC):
     def _save_image(self, images: list[list[PIL.Image]], titles: list[str], path: Path, global_step: int):
         os.makedirs(path, exist_ok=True)
         for image_list, title in zip(images, titles): 
-            image_grid = make_image_grid(image_list, rows=int(len(image_list)**0.5), cols=int(len(image_list)**0.5))
+            if len(image_list) > 4:
+                ValueError("Number of images in list must be less than 4")
+            missing_num = 4-len(image_list)
+            for _ in range(missing_num):
+                image_list.append(PIL.Image.new("L", (256, 256), 0))
+
+            image_grid = make_image_grid(image_list, rows=2, cols=2)
             image_grid.save(f"{path}/{title}_{global_step:07d}.png")
         print("image saved") 
 
@@ -77,9 +84,6 @@ class Evaluation2D(ABC):
 
         self._reset_seed(self.config.seed)
         for n_iter, batch in enumerate(self.dataloader): 
-            if (self.config.evaluate_num_batches != -1) and (n_iter >= self.config.evaluate_num_batches):
-                break 
-             
             # calc validation loss
             input, noise, timesteps = self._get_training_input(batch)  
             noise_pred = self.pipeline.unet(input, timesteps, return_dict=False)[0] # kernel dies
@@ -108,7 +112,12 @@ class Evaluation2D(ABC):
             for key, value in new_metrics.items(): 
                 metrics[key] += value
 
+            if (self.config.evaluate_num_batches != -1) and (n_iter >= self.config.evaluate_num_batches-1):
+                break 
+
             self.progress_bar.update(1)
+
+
 
         
         # calculate average metrics
