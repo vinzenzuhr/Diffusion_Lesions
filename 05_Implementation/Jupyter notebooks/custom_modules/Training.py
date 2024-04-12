@@ -42,7 +42,7 @@ class Training(ABC):
         if self.accelerator.is_main_process:
             #setup tensorboard
             self.tb_summary = SummaryWriter(config.output_dir, purge_step=0)
-            self._meta_logs()
+            self.log_meta_logs()
             
             if config.output_dir is not None:
                 os.makedirs(config.output_dir, exist_ok=True) 
@@ -91,7 +91,7 @@ class Training(ABC):
         masks = masks[:,None,:,:].int() 
         return masks
 
-    def _meta_logs(self):
+    def log_meta_logs(self):
         #log at tensorboard
         scalars = [
             "image_size",
