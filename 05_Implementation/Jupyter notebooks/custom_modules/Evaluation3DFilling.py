@@ -42,4 +42,6 @@ class Evaluation3DFilling(Evaluation3D):
             images.append(new_images)
         images = torch.cat(images, dim=0)
 
+        images = images.permute(1, 2, 0, 3) 
+
         return images, clean_images, slice_indices, masks

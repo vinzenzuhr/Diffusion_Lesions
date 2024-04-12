@@ -46,7 +46,9 @@ class Evaluation3D(ABC):
                 image_shape = batch["original_shape"][sample_idx] 
 
                 images, clean_images, slice_indices, masks = self._start_pipeline(batch, sample_idx, parameters)    
-                #images = images.permute(3, 1, 0, 2) 
+                
+
+
             
                 #overwrite the original 3D image with the modified 2D slices
                 final_3d_images = torch.clone(clean_images.detach())

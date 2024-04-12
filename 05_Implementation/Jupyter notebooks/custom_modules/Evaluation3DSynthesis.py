@@ -51,5 +51,7 @@ class Evaluation3DSynthesis(Evaluation3D):
             #new_images = torch.from_numpy(new_images).to(clean_images.device) 
             images.append(new_images)
         images = torch.cat(images, dim=0)
+
+        images = images.permute(1, 2, 0, 3) 
                 
         return images, clean_images, slice_indices, synthesis_masks
