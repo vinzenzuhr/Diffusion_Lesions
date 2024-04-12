@@ -62,8 +62,15 @@ class Training(ABC):
         self.global_step = 0
 
     def _get_dataloader(self, dataset, batch_size, num_workers=4, random_sampler=False): 
+        def _reset_seed(worker_id=0): 
+            np.random.seed(0) 
+            torch.manual_seed(0)
+            torch.cuda.manual_seed_all(0)
+            random.seed(0)
+            return
+
         sampler = RandomSampler(dataset, generator=(None if random_sampler else torch.cuda.manual_seed_all(self.config.seed)))
-        return DataLoader(dataset, batch_size=batch_size, num_workers=num_workers, sampler=sampler, worker_init_fn=(None if random_sampler else self._reset_seed))
+        return DataLoader(dataset, batch_size=batch_size, num_workers=num_workers, sampler=sampler, worker_init_fn=(None if random_sampler else _reset_seed))
     
     def _get_random_masks(self, n, generator=None):
         #create circular mask with random center around the center point of the pictures and a radius between 3 and 50 pixels
@@ -131,14 +138,6 @@ class Training(ABC):
                 for text in texts:
                     f.write(f"{text}:{getattr(self.config, text)},")
                 f.write("\n")
-
-
-    def _reset_seed(self, worker_id=0): 
-        np.random.seed(self.config.seed) 
-        torch.manual_seed(self.config.seed)
-        torch.cuda.manual_seed_all(self.config.seed)
-        random.seed(self.config.seed)
-        return
     
     def _save_logs(self, loss, total_norm):
         
