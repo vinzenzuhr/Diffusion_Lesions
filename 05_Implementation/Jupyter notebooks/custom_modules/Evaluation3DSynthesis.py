@@ -14,9 +14,9 @@ class Evaluation3DSynthesis(Evaluation3D):
         if self.config.add_lesion_technique == "mean_intensity":
             lesion_intensity = -0.5492
         elif self.config.add_lesion_technique == "other_lesions":
-            #calculcate mean intensity value of the lesion
+            # use first quartile of lesion intensity as new lesion intensity
             masks = batch["mask"][sample_idx]  #torch.Size([1, 256, 256, 256])
-            lesion_intensity = clean_images[masks.to(torch.bool)].mean()
+            lesion_intensity = clean_images[masks.to(torch.bool)].quantile(0.25)
             print("mean lesion intensity: ", lesion_intensity)
         else:
             raise ValueError("config.add_lesion_technique must be either 'mean_intensity' or 'other_lesions'")
