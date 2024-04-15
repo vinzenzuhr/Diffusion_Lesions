@@ -12,50 +12,31 @@ class DatasetMRI3D(DatasetMRI):
     def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, root_dir_synthesis: Path = None, directDL: bool = True, seed: int = None, only_connected_masks: bool = True):
         super().__init__(root_dir_img, root_dir_segm, root_dir_masks, root_dir_synthesis, directDL, seed, only_connected_masks)
 
-
-        idx=0 
-        for i in tqdm(np.arange(len(self.list_paths_t1n))): 
+        idx_dict=0 
+        for idx_t1n in tqdm(np.arange(len(self.list_paths_t1n))): 
             idx_mask=0
-            while True:
-                # extract connected components from mask or load them if they are already exist
-                if only_connected_masks: 
-                    #get mask and calculcate components
-                    t1n_mask = self._get_mask(self.list_paths_masks[i][idx_mask], self.list_paths_segm[i])
-                    if (t1n_mask is None):
-                        continue
-
-                    path_component_matrix = os.path.splitext(self.list_paths_masks[i][idx_mask])[0] + "_component_matrix.npy"
-                    component_matrix, n = self._get_component_matrix(t1n_mask, path_component_matrix) 
-
-                    # get only connected masks with a minimum volume
-                    min_volume=400#25
-                    list_component_labels=[]
-                    for j in torch.arange(1, n+1):
-                        volume=torch.count_nonzero(component_matrix==j)
-                        if volume > min_volume:
-                            list_component_labels.append(int(j))
+            # go through every mask of the current t1n image and add  slices to dict
+            while True:  
+                path_component_matrix = None
+                list_component_labels = None
+                if only_connected_masks:
+                    path_component_matrix, list_component_labels = self._get_relevant_components(self.list_paths_masks[idx_t1n][idx_mask], self.list_paths_segm[idx_t1n])
                     
-                    # add list of connected masks to dataset
-                    if len(list_component_labels) > 0:
-                        self.idx_to_element[idx]=(
-                            self.list_paths_t1n[i], 
-                            self.list_paths_segm[i] if self.list_paths_segm else None, 
-                            self.list_paths_masks[i][idx_mask] if self.list_paths_masks else None,
-                            path_component_matrix if only_connected_masks else None,
-                            list_component_labels if only_connected_masks else None,
-                            self.list_paths_synthesis[i] if self.list_paths_synthesis else None,)   
-                        idx += 1
-                else:
-                    self.idx_to_element[idx]=(
-                        self.list_paths_t1n[i], 
-                        self.list_paths_segm[i] if self.list_paths_segm else None, 
-                        self.list_paths_masks[i][idx_mask] if self.list_paths_masks else None,
-                        None,
-                        None,
-                        self.list_paths_synthesis[i] if self.list_paths_synthesis else None,) 
-                    idx += 1
+                    # if there are no connected components which reach the minimum area, skip this mask
+                    if len(list_component_labels) == 0:
+                        idx_mask+=1
+                        continue
+ 
+                self.idx_to_element[idx_dict]=(
+                    self.list_paths_t1n[idx_t1n], 
+                    self.list_paths_segm[idx_t1n] if self.list_paths_segm else None, 
+                    self.list_paths_masks[idx_t1n][idx_mask] if self.list_paths_masks else None,
+                    path_component_matrix,
+                    list_component_labels,
+                    self.list_paths_synthesis[idx_t1n] if self.list_paths_synthesis else None,) 
+                idx_dict += 1
 
-                if(self.list_paths_masks and len(self.list_paths_masks[i])-1>idx_mask):
+                if(self.list_paths_masks and len(self.list_paths_masks[idx_t1n])-1>idx_mask):
                     idx_mask+=1 
                 else:
                     break
@@ -137,3 +118,22 @@ class DatasetMRI3D(DatasetMRI):
                 "original_shape": [t1n_img_orig.shape]
             } 
             return sample_dict
+    
+    def _get_relevant_components(self, path_mask, path_segm):
+        #get mask and calculcate components
+        t1n_mask = self._get_mask(path_mask, path_segm)
+        if (t1n_mask is None):
+            return None, []
+
+        path_component_matrix = os.path.splitext(path_mask)[0] + "_component_matrix.npy"
+        component_matrix, n = self._get_component_matrix(t1n_mask, path_component_matrix) 
+
+        # get only connected masks with a minimum volume
+        min_volume=400#25
+        list_component_labels=[]
+        for j in torch.arange(1, n+1):
+            volume=torch.count_nonzero(component_matrix==j)
+            if volume > min_volume:
+                list_component_labels.append(int(j)) 
+
+        return path_component_matrix, list_component_labels

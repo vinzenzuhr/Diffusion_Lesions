@@ -16,89 +16,30 @@ class DatasetMRI2D(DatasetMRI):
         if(root_dir_synthesis and not root_dir_masks):
             raise ValueError(f"If root_dir_masks_synthesis is given, then root_dir_masks is mandatory")
 
-
         # go through all 3D segmentation and add relevant 2D slices to dict
-        idx=0
-        for j in tqdm(np.arange(len(self.list_paths_t1n))):
+        idx_dict=0
+        for idx_t1n in tqdm(np.arange(len(self.list_paths_t1n))): 
             # if there are masks restrict slices to mask content
             if(self.list_paths_masks):
-                for path_mask in self.list_paths_masks[j]:
-                    t1n_mask = self._get_mask(path_mask, self.list_paths_segm[j] if self.list_paths_segm else None)
-                    if (t1n_mask is None):
-                        continue 
- 
-                    # extract connected components from mask or load them if they are already exist
-                    if only_connected_masks:
-                        path_component_matrix = os.path.splitext(path_mask)[0] + "_component_matrix.npy"  
-                        component_matrix, _ = self._get_component_matrix(t1n_mask, path_component_matrix)
-
-                    # go through every slice and add (connected) masks to dataset  
-                    for idx_slice in torch.arange(t1n_mask.shape[1]):
-                        if (not t1n_mask[:,idx_slice,:].any()):
-                            continue
-                        if only_connected_masks:
-                            # get connected components in slice and add them to dataset
-                            slice_components = list(torch.unique(component_matrix[:, idx_slice, :]))
-                            slice_components.remove(torch.tensor(0))
-
-                            relevant_components = []
-                            for component in slice_components:
-                                min_area = 100
-                                if (torch.count_nonzero(component_matrix[:,idx_slice,:]==component) >= min_area):
-                                    relevant_components.append(component)
-                            if len(relevant_components) > 0:
-                                self.idx_to_element[idx]=(
-                                    self.list_paths_t1n[j], 
-                                    self.list_paths_segm[j] if self.list_paths_segm else None, 
-                                    path_mask, 
-                                    path_component_matrix, 
-                                    relevant_components,
-                                    self.list_paths_synthesis[j] if self.list_paths_synthesis else None,
-                                    idx_slice)
-                                idx+=1
-                        else:
-                            self.idx_to_element[idx]=(
-                                self.list_paths_t1n[j], 
-                                self.list_paths_segm[j] if self.list_paths_segm else None, 
-                                path_mask, 
-                                None, 
-                                None, 
-                                self.list_paths_synthesis[j] if self.list_paths_synthesis else None,
-                                idx_slice)
-                            idx+=1
-            else:
-                # if there are no masks, but a segmentation mask restrict slices to white matter regions
-                if(self.list_paths_segm):
-                    t1n_segm = self._get_white_matter_segm(self.list_paths_segm[j])
-
-                    # get first slice with white matter content  
-                    i=0
-                    while(not t1n_segm[:,i,:].any()):
-                        i += 1 
-                    bottom = i
-        
-                    # get last slice with white matter content  
-                    i=t1n_segm.shape[1]-1
-                    while(not t1n_segm[:,i,:].any()):
-                        i -= 1 
-                    top = i
-                # if there are no masks and no segmentations don't restrict slices
-                else:    
-                    t1n_example = nib.load(self.list_paths_t1n[0])
-                    t1n_example = t1n_example.get_fdata()
-                    bottom = 0
-                    top = t1n_example.shape[1]  
-                # add all slices between desired top and bottom slice to dataset  
-                for i in np.arange(top-bottom): 
-                    self.idx_to_element[idx]=(
-                        self.list_paths_t1n[j], 
-                        self.list_paths_segm[j] if self.list_paths_segm else None, 
-                        None, 
-                        None,
-                        0,
-                        0,
-                        bottom+i)
-                    idx+=1
+                # multiple masks for one t1n image are possible
+                for path_mask in self.list_paths_masks[idx_t1n]:
+                    idx_dict=self._add_slices_with_mask(
+                        path_mask, 
+                        self.list_paths_t1n[idx_t1n], 
+                        idx_dict, 
+                        self.list_paths_segm[idx_t1n] if self.list_paths_segm else None, 
+                        self.list_paths_synthesis[idx_t1n] if self.list_paths_synthesis else None)
+            # if there are segmentation restrict slices to white matter
+            elif(self.list_paths_segm):
+                idx_dict = self._add_slices_with_segmentation(self.list_paths_segm[idx_t1n], self.list_paths_t1n[idx_t1n], idx_dict)
+            # if there are no masks and no segmentations don't restrict slices  
+            else:  
+                t1n_example = nib.load(self.list_paths_t1n[idx_t1n])
+                t1n_example = t1n_example.get_fdata()
+                bottom = 0
+                top = t1n_example.shape[1]  
+                idx_dict = self._add_slices_between_indices(self.list_paths_t1n[idx_t1n], idx_dict, bottom, top) 
+                
                 
     def __getitem__(self, idx): 
             t1n_path = self.idx_to_element[idx][0]
@@ -185,3 +126,87 @@ class DatasetMRI2D(DatasetMRI):
                 "name": t1n_path.parent.stem,
             } 
             return sample_dict 
+    
+    def _add_slices_with_mask(self, path_mask, path_t1n, idx_dict, path_segm = None, path_synthesis = None):  
+
+        t1n_mask = self._get_mask(path_mask, path_segm)
+        if (t1n_mask is None):
+            return idx_dict 
+
+        # extract connected components from mask or load them if they are already exist
+        path_component_matrix = None
+        if self.only_connected_masks:
+            path_component_matrix = os.path.splitext(path_mask)[0] + "_component_matrix.npy"  
+            component_matrix, _ = self._get_component_matrix(t1n_mask, path_component_matrix)
+
+        # go through every slice and add (connected) masks to dataset  
+        for idx_slice in torch.arange(t1n_mask.shape[1]):
+            if (not t1n_mask[:,idx_slice,:].any()):
+                continue
+
+            relevant_components = None
+            if self.only_connected_masks: 
+                relevant_components = self._get_relevant_components(component_matrix, idx_slice)
+                if len(relevant_components) == 0:
+                    continue
+            
+            self.idx_to_element[idx_dict]=(
+                path_t1n, 
+                path_segm, 
+                path_mask, 
+                path_component_matrix, 
+                relevant_components, 
+                path_synthesis,
+                idx_slice) 
+            idx_dict+=1
+
+        return idx_dict
+
+    def _add_slices_with_segmentation(self, path_segm, path_t1n, idx_dict):
+        # Restrict slices to white matter regions 
+        t1n_segm = self._get_white_matter_segm(path_segm)
+
+        # get first slice with white matter content  
+        i=0
+        while(not t1n_segm[:,i,:].any()):
+            i += 1 
+        bottom = i
+
+        # get last slice with white matter content  
+        i=t1n_segm.shape[1]-1
+        while(not t1n_segm[:,i,:].any()):
+            i -= 1 
+        top = i  
+
+        # add slices to dict
+        idx_dict = self._add_slices_between_indices(path_t1n, idx_dict, bottom, top, path_segm)
+        
+        return idx_dict
+    
+    def _add_slices_between_indices(self, path_t1n, idx_dict, bottom, top, path_segm = None):
+        # Not usable for masks 
+        for i in np.arange(top-bottom): 
+            slice_idx = bottom+i
+            self.idx_to_element[idx_dict]=(
+                path_t1n, 
+                path_segm, 
+                None, 
+                None,
+                0,
+                0,
+                slice_idx)
+            idx_dict+=1 
+        return idx_dict
+    
+    def _get_relevant_components(self, component_matrix, idx_slice): 
+        slice_components = list(torch.unique(component_matrix[:, idx_slice, :]))
+        slice_components.remove(torch.tensor(0))
+
+        relevant_components = []
+        for component in slice_components:
+            min_area = 100
+            if (torch.count_nonzero(component_matrix[:,idx_slice,:]==component) >= min_area):
+                relevant_components.append(component)
+
+        return relevant_components
+
