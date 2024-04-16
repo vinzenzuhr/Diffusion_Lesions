@@ -207,7 +207,7 @@ class RePaintPipeline(DiffusionPipeline):
 
         t_last = self.scheduler.timesteps[0] + 1
         generator = generator[0] if isinstance(generator, list) else generator
-        for i, t in enumerate(self.progress_bar(self.scheduler.timesteps)):
+        for i, t in enumerate(self.scheduler.timesteps):
             if t < t_last:
                 # predict the noise residual
                 model_output = self.unet(image, t).sample
@@ -219,10 +219,7 @@ class RePaintPipeline(DiffusionPipeline):
                 image = self.scheduler.undo_step(image, t_last, generator)
             t_last = t
 
-        image = image.cpu().permute(0, 2, 3, 1).numpy()
-        if output_type == "pil":
-            image = (image / 2 + 0.5).clamp(0, 1)
-            image = self.numpy_to_pil(image)
+        image = image.clamp(-1, 1) 
 
         if not return_dict:
             return (image,)
