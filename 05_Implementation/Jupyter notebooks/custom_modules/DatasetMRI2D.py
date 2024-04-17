@@ -9,37 +9,56 @@ import os
 from tqdm.auto import tqdm
 
 class DatasetMRI2D(DatasetMRI):
-    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, root_dir_synthesis: Path = None, directDL: bool = True, seed: int = None, only_connected_masks: bool = True, axis_augmentation: bool = False):
+    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, root_dir_synthesis: Path = None, directDL: bool = True, seed: int = None, only_connected_masks: bool = True):
         super().__init__(root_dir_img, root_dir_segm, root_dir_masks, root_dir_synthesis, directDL, seed, only_connected_masks)
-        self.axis_augmentation = axis_augmentation
         
         if(root_dir_synthesis and not root_dir_masks):
             raise ValueError(f"If root_dir_masks_synthesis is given, then root_dir_masks is mandatory")
 
         # go through all 3D segmentation and add relevant 2D slices to dict
-        idx_dict=0
+        idx_dict=0 
         for idx_t1n in tqdm(np.arange(len(self.list_paths_t1n))): 
+            slices_dicts = list()            
             # if there are masks restrict slices to mask content
-            if(self.list_paths_masks):
+            if(self.list_paths_masks): 
                 # multiple masks for one t1n image are possible
                 for path_mask in self.list_paths_masks[idx_t1n]:
-                    idx_dict=self._add_slices_with_mask(
-                        path_mask, 
-                        self.list_paths_t1n[idx_t1n], 
-                        idx_dict, 
-                        self.list_paths_segm[idx_t1n] if self.list_paths_segm else None, 
-                        self.list_paths_synthesis[idx_t1n] if self.list_paths_synthesis else None)
+                    slices_dicts.append(
+                        self._get_relevant_slices(
+                            "mask", 
+                            path_mask = path_mask, 
+                            path_segm = self.list_paths_segm[idx_t1n] if self.list_paths_segm else None, 
+                            path_synthesis = self.list_paths_synthesis[idx_t1n] if self.list_paths_synthesis else None)) 
             # if there are segmentation restrict slices to white matter
             elif(self.list_paths_segm):
-                idx_dict = self._add_slices_with_segmentation(self.list_paths_segm[idx_t1n], self.list_paths_t1n[idx_t1n], idx_dict)
+                slices_dicts.append(
+                    self._get_relevant_slices(
+                        procedure = "segmentation",  
+                        path_segm = self.list_paths_segm[idx_t1n]))  
             # if there are no masks and no segmentations don't restrict slices  
             else:  
                 t1n_example = nib.load(self.list_paths_t1n[idx_t1n])
                 t1n_example = t1n_example.get_fdata()
-                bottom = 0
-                top = t1n_example.shape[1]  
-                idx_dict = self._add_slices_between_indices(self.list_paths_t1n[idx_t1n], idx_dict, bottom, top) 
-                
+                slices_dicts.append({
+                    "path_mask": None,
+                    "path_segm": None,
+                    "path_synthesis": None,
+                    "list_relevant_slices": np.arange(0, t1n_example.shape[1]),
+                    "path_component_matrix": None,
+                    "list_relevant_components": None
+                }) 
+
+            for slices_dict in slices_dicts:
+                for i in np.arange(len(slices_dict["list_relevant_slices"])):
+                    self.idx_to_element[idx_dict]=(
+                        self.list_paths_t1n[idx_t1n], 
+                        slices_dict["path_segm"], 
+                        slices_dict["path_mask"], 
+                        slices_dict["path_component_matrix"], 
+                        slices_dict["list_relevant_components"][i] if slices_dict["list_relevant_components"] else None,
+                        slices_dict["path_synthesis"],
+                        slices_dict["list_relevant_slices"][i]) 
+                    idx_dict+=1
                 
     def __getitem__(self, idx): 
             t1n_path = self.idx_to_element[idx][0]
@@ -127,77 +146,6 @@ class DatasetMRI2D(DatasetMRI):
             } 
             return sample_dict 
     
-    def _add_slices_with_mask(self, path_mask, path_t1n, idx_dict, path_segm = None, path_synthesis = None):  
-
-        t1n_mask = self._get_mask(path_mask, path_segm)
-        if (t1n_mask is None):
-            return idx_dict 
-
-        # extract connected components from mask or load them if they are already exist
-        path_component_matrix = None
-        if self.only_connected_masks:
-            path_component_matrix = os.path.splitext(path_mask)[0] + "_component_matrix.npy"  
-            component_matrix, _ = self._get_component_matrix(t1n_mask, path_component_matrix)
-
-        # go through every slice and add (connected) masks to dataset  
-        for idx_slice in torch.arange(t1n_mask.shape[1]):
-            if (not t1n_mask[:,idx_slice,:].any()):
-                continue
-
-            relevant_components = None
-            if self.only_connected_masks: 
-                relevant_components = self._get_relevant_components(component_matrix, idx_slice)
-                if len(relevant_components) == 0:
-                    continue
-            
-            self.idx_to_element[idx_dict]=(
-                path_t1n, 
-                path_segm, 
-                path_mask, 
-                path_component_matrix, 
-                relevant_components, 
-                path_synthesis,
-                idx_slice) 
-            idx_dict+=1
-
-        return idx_dict
-
-    def _add_slices_with_segmentation(self, path_segm, path_t1n, idx_dict):
-        # Restrict slices to white matter regions 
-        t1n_segm = self._get_white_matter_segm(path_segm)
-
-        # get first slice with white matter content  
-        i=0
-        while(not t1n_segm[:,i,:].any()):
-            i += 1 
-        bottom = i
-
-        # get last slice with white matter content  
-        i=t1n_segm.shape[1]-1
-        while(not t1n_segm[:,i,:].any()):
-            i -= 1 
-        top = i  
-
-        # add slices to dict
-        idx_dict = self._add_slices_between_indices(path_t1n, idx_dict, bottom, top, path_segm)
-        
-        return idx_dict
-    
-    def _add_slices_between_indices(self, path_t1n, idx_dict, bottom, top, path_segm = None):
-        # Not usable for masks 
-        for i in np.arange(top-bottom): 
-            slice_idx = bottom+i
-            self.idx_to_element[idx_dict]=(
-                path_t1n, 
-                path_segm, 
-                None, 
-                None,
-                0,
-                0,
-                slice_idx)
-            idx_dict+=1 
-        return idx_dict
-    
     def _get_relevant_components(self, component_matrix, idx_slice): 
         slice_components = list(torch.unique(component_matrix[:, idx_slice, :]))
         slice_components.remove(torch.tensor(0))
@@ -209,4 +157,75 @@ class DatasetMRI2D(DatasetMRI):
                 relevant_components.append(component)
 
         return relevant_components
+
+    def _get_relevant_slices(self, procedure, path_mask = None, path_segm = None, path_synthesis = None):
+        output = dict()
+        output["path_mask"] = None
+        output["path_segm"] = None
+        output["path_synthesis"] = None
+        output["list_relevant_slices"] = None
+        output["path_component_matrix"] = None 
+        output["list_relevant_components"] = None
+
+        if procedure == "mask":
+            assert path_mask, "If procedure is mask, then path_mask is mandatory"
+
+            t1n_mask = self._get_mask(path_mask, path_segm)
+            if (t1n_mask is None):
+                return None, [], [] 
+
+            # extract connected components from mask or load them if they are already exist
+            path_component_matrix = None
+            if self.only_connected_masks:
+                path_component_matrix = os.path.splitext(path_mask)[0] + "_component_matrix.npy"  
+                component_matrix, _ = self._get_component_matrix(t1n_mask, path_component_matrix)
+
+            # go through every slice and add (connected) masks to dataset 
+            list_relevant_slices = list()
+            list_relevant_components = list()
+            for idx_slice in torch.arange(t1n_mask.shape[1]):
+                if (not t1n_mask[:,idx_slice,:].any()):
+                    continue
+
+                relevant_components = None
+                if self.only_connected_masks: 
+                    relevant_components = self._get_relevant_components(component_matrix, idx_slice)
+                    if len(relevant_components) == 0:
+                        continue
+                list_relevant_slices.append(idx_slice)
+                list_relevant_components.append(relevant_components) 
+
+            output["path_mask"] = path_mask
+            output["path_segm"] = path_segm
+            output["path_synthesis"] = path_synthesis
+            output["list_relevant_slices"] = list_relevant_slices
+            output["path_component_matrix"] = path_component_matrix
+            output["list_relevant_components"] = list_relevant_components
+
+            return output 
+        
+        elif procedure == "segmentation":
+            assert path_segm, "If procedure is segmentation, then path_segm is mandatory"
+
+            # Restrict slices to white matter regions 
+            t1n_segm = self._get_white_matter_segm(path_segm)
+
+            # get first slice with white matter content  
+            i=0
+            while(not t1n_segm[:,i,:].any()):
+                i += 1 
+            bottom = i
+
+            # get last slice with white matter content  
+            i=t1n_segm.shape[1]-1
+            while(not t1n_segm[:,i,:].any()):
+                i -= 1 
+            top = i+1  
+
+            output["path_segm"] = path_segm
+            output["list_relevant_slices"] = np.arange(bottom, top)
+            
+            return output
+        else:
+            raise ValueError(f"Procedure {procedure} is not supported")
 
