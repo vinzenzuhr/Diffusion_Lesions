@@ -34,9 +34,9 @@ class Evaluation3D(ABC):
         
         self.progress_bar = tqdm(total=len(self.dataloader), disable=not self.accelerator.is_local_main_process) 
         self.progress_bar.set_description(f"Evaluation 3D") 
-
+ 
         print("Start 3D evaluation")
-        for batch in self.dataloader:
+        for batch in self.dataloader: 
             # go through sample in batch
             for sample_idx in torch.arange(batch["gt_image"].shape[0]):
                 
@@ -51,7 +51,7 @@ class Evaluation3D(ABC):
 
             
                 #overwrite the original 3D image with the modified 2D slices
-                final_3d_images = torch.clone(clean_images.detach())
+                final_3d_images = torch.clone(clean_images.detach()) 
                 final_3d_images[:, :, slice_indices, :] = images
 
                 #calculate metrics

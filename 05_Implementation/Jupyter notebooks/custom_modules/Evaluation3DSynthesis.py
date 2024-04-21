@@ -25,11 +25,18 @@ class Evaluation3DSynthesis(Evaluation3D):
         images_with_lesions = clean_images.clone()
         images_with_lesions[synthesis_masks.to(torch.bool)] = lesion_intensity
     
-        #get slices which have to be modified
+        if self.config.num_samples_per_batch>1:
+            raise ValueError("num_samples_per_batch must be implmented for Evaluation3DSynthesis")
+
+        # get slices which have to be modified.  Make sure that there are at least num_samples slices in a package, which are located next to each other.
+        position_in_package = 0
         slice_indices = []
         for slice_idx in torch.arange(clean_images.shape[2]):
-            if (synthesis_masks[:, :, slice_idx, :]).any():
+            if (synthesis_masks[:, :, slice_idx, :]).any() or position_in_package>0:
                 slice_indices.append(slice_idx.unsqueeze(0)) 
+                position_in_package += 1
+                if position_in_package == self.config.num_samples_per_batch:
+                    position_in_package = 0  
         slice_indices = torch.cat(slice_indices, 0)
         
     
