@@ -1,3 +1,8 @@
+"""
+A large part of the code originally comes from the official 
+Huggingface Diffusers implementation 'huggingface/diffusers/src/diffusers/pipelines/ddim/pipeline_ddim.py' received from Github
+"""
+
 from diffusers import DiffusionPipeline, DDIMScheduler, ImagePipelineOutput
 from diffusers.utils.torch_utils import randn_tensor
 from typing import List, Optional, Tuple, Union

@@ -26,16 +26,15 @@ class Evaluation2DFilling(Evaluation2D):
         clean_images = batch["gt_image"]
         masks = batch["mask"] 
         voided_images = clean_images*(1-masks)
-        
-        print(2) 
+         
         inpainted_images = self.pipeline(
             voided_images,
             masks,
             generator=torch.cuda.manual_seed_all(self.config.seed), 
             num_inference_steps = self.config.num_inference_steps,
             **parameters
-        ).images
-        print(3) 
+        ).images 
+        
         #inpainted_images = torch.from_numpy(inpainted_images).to(clean_images.device) 
         return inpainted_images, clean_images, masks
     

@@ -79,27 +79,24 @@ class Evaluation2D(ABC):
         for metric in metric_list:
             metrics[metric] = 0 
          
-        self.progress_bar = tqdm(total=len(self.dataloader), disable=not self.accelerator.is_local_main_process) 
-        self.progress_bar.set_description(f"Evaluation 2D") 
-
+        self.progress_bar = tqdm(total=len(self.dataloader) if self.config.evaluate_num_batches == -1 else self.config.evaluate_num_batches, disable=not self.accelerator.is_local_main_process) 
+        self.progress_bar.set_description(f"Evaluation 2D")  
         self._reset_seed(self.config.seed)
         for n_iter, batch in enumerate(self.dataloader): 
             # calc validation loss
-            input, noise, timesteps = self._get_training_input(batch)  
-            noise_pred = self.pipeline.unet(input, timesteps, return_dict=False)[0] # kernel dies
+            input, noise, timesteps = self._get_training_input(batch)   
+            noise_pred = self.pipeline.unet(input, timesteps, return_dict=False)[0]
             loss = F.mse_loss(noise_pred, noise)          
             all_loss = self.accelerator.gather_for_metrics(loss).mean() 
             metrics["val_loss"] += all_loss 
             #free up memory
             del input, noise, timesteps, noise_pred, loss, all_loss 
-            torch.cuda.empty_cache()
-            
+            torch.cuda.empty_cache() 
             # run pipeline. The returned masks can be either existing lesions or the synthetic ones
             images, clean_images, masks = self._start_pipeline( 
                 batch,
                 parameters
-            )
-
+            ) 
             # transform from B x H x W x C to B x C x H x W 
             #images = torch.permute(images, (0, 3, 1, 2))
 
@@ -135,8 +132,3 @@ class Evaluation2D(ABC):
             list, title_list = self._get_image_lists(images, clean_images, masks, batch)
             image_list = [[to_pil_image(x, mode="L") for x in images] for images in list]
             self._save_image(image_list, title_list, os.path.join(self.config.output_dir, "samples_2D"), global_step)
-
-            
-            
-
-    
