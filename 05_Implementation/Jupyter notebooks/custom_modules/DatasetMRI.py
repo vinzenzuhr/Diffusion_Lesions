@@ -99,7 +99,6 @@ class DatasetMRI(Dataset):
 
         return component_matrix, n
 
-        
     def _get_white_matter_segm(self, segm_path: str):
         """
         Restricts the slices to white matter regions.

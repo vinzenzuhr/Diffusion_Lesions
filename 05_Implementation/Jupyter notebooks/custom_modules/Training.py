@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data import RandomSampler 
 import torch.nn.functional as F
 from tqdm.auto import tqdm
+from Dataloader import get_dataloader
 
 class Training(ABC):
     def __init__(
@@ -23,7 +24,8 @@ class Training(ABC):
             dataset3DEvaluation, 
             evaluation2D, 
             evaluation3D, 
-            pipelineFactory):
+            pipelineFactory, 
+            multi_sample=False):
         self.config = config
         self.model = model
         self.noise_scheduler = noise_scheduler
@@ -38,6 +40,10 @@ class Training(ABC):
             gradient_accumulation_steps=config.gradient_accumulation_steps, 
             project_dir=os.path.join(config.output_dir, "tensorboard"), #evt. delete
         )
+        
+        self.train_dataloader = get_dataloader(dataset = datasetTrain, batch_size = config.train_batch_size, random_sampler=True, seed=self.config.seed, multi_sample=multi_sample)
+        self.d2_eval_dataloader = get_dataloader(dataset = datasetEvaluation, batch_size = config.eval_batch_size, random_sampler=False, seed=self.config.seed, multi_sample=multi_sample)
+        self.d3_eval_dataloader = get_dataloader(dataset = dataset3DEvaluation, batch_size = 1, random_sampler=False, seed=self.config.seed, multi_sample=False) 
 
         if self.accelerator.is_main_process:
             #setup tensorboard
@@ -48,9 +54,6 @@ class Training(ABC):
                 os.makedirs(config.output_dir, exist_ok=True) 
             self.accelerator.init_trackers("train_example") #evt. delete
 
-        self.train_dataloader = self._get_dataloader(dataset = datasetTrain, batch_size = config.train_batch_size, random_sampler=True)
-        self.d2_eval_dataloader = self._get_dataloader(dataset = datasetEvaluation, batch_size = config.eval_batch_size, random_sampler=False)
-        self.d3_eval_dataloader = self._get_dataloader(dataset = dataset3DEvaluation, batch_size = 1, random_sampler=False) 
 
         self.model, self.optimizer, self.train_dataloader, self.d2_eval_dataloader, self.d3_eval_dataloader, self.lr_scheduler = self.accelerator.prepare(
             self.model, self.optimizer, self.train_dataloader, self.d2_eval_dataloader, self.d3_eval_dataloader, self.lr_scheduler
@@ -61,7 +64,7 @@ class Training(ABC):
         self.epoch = 0
         self.global_step = 0
 
-    def _get_dataloader(self, dataset, batch_size, num_workers=4, random_sampler=False): 
+    def _get_dataloader(self, dataset, batch_size, num_workers=4, random_sampler=False, seed=None): 
         def _reset_seed(worker_id=0): 
             np.random.seed(0) 
             torch.manual_seed(0)
@@ -130,6 +133,10 @@ class Training(ABC):
             self.tb_summary.add_scalar(scalar, getattr(self.config, scalar), 0)
         for text in texts:
             self.tb_summary.add_text(text, getattr(self.config, text), 0)
+            
+        self.tb_summary.add_scalar("len(train_dataloader)", len(self.train_dataloader), 0)
+        self.tb_summary.add_scalar("len(d2_eval_dataloader)", len(self.d2_eval_dataloader), 0)
+        self.tb_summary.add_scalar("len(d3_eval_dataloader)", len(self.d3_eval_dataloader), 0) 
 
         if self.config.log_csv:
             with open(os.path.join(self.config.output_dir, "metrics.csv"), "w") as f:
@@ -137,7 +144,13 @@ class Training(ABC):
                     f.write(f"{scalar}:{getattr(self.config, scalar)},")
                 for text in texts:
                     f.write(f"{text}:{getattr(self.config, text)},")
+                f.write(f"len(train_dataloader):{len(self.train_dataloader)},")
+                f.write(f"len(d2_eval_dataloader):{len(self.d2_eval_dataloader)},")
+                f.write(f"len(d3_eval_dataloader):{len(self.d3_eval_dataloader)}")
                 f.write("\n")
+
+        
+
     
     def _save_logs(self, loss, total_norm):
         
@@ -200,7 +213,7 @@ class Training(ABC):
                     #do learning step
                     self.optimizer.step()
                     self.lr_scheduler.step()
-                    self.optimizer.zero_grad()
+                    self.optimizer.zero_grad() 
 
                 self.progress_bar.update(1)
 

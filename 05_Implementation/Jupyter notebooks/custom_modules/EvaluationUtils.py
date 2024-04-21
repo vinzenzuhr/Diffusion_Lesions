@@ -12,6 +12,11 @@ def calc_metrics(images1, images2, masks):
 
     for idx in range(batch_size):
 
+        # skip images with no mask
+        if (masks[idx].sum() == 0):
+            batch_size -= 1
+            continue
+
         # SSIM metric
         _, sim_mat = structural_similarity(
             images1[idx].detach().cpu().numpy(),
@@ -41,7 +46,7 @@ def calc_metrics(images1, images2, masks):
         # PSNR metric
         metrics["psnr_full"] += 10*torch.log10(4/mse_full) 
         metrics["psnr_out"] += 10*torch.log10(4/mse_out)
-        metrics["psnr_in"] += 10*torch.log10(4/mse_in)
+        metrics["psnr_in"] += 10*torch.log10(4/mse_in) 
     
     for metric in metric_list:
         metrics[metric] /= batch_size

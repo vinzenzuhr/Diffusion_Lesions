@@ -3,8 +3,8 @@ from Training import Training
 from RePaintPipeline import RePaintPipeline
 
 class TrainingUnconditional(Training):
-    def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory, deactivate3Devaluation = True, evaluation_pipeline_parameters = {}):
-        super().__init__(config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory)
+    def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory, multi_sample=False, deactivate3Devaluation = True, evaluation_pipeline_parameters = {}):
+        super().__init__(config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory, multi_sample)
         self.deactivate3Devaluation = deactivate3Devaluation
         self.evaluation_pipeline_parameters = evaluation_pipeline_parameters 
 
@@ -38,7 +38,7 @@ class TrainingUnconditional(Training):
 
         
         # Evaluate 3D images composed of 2D slices
-        if (not self.deactivate3Devaluation and ((self.epoch) % self.config.evaluate_3D_epochs == 0 or self.epoch == self.config.num_epochs - 1)): 
+        if (not self.config.deactivate3Devaluation and ((self.epoch) % self.config.evaluate_3D_epochs == 0 or self.epoch == self.config.num_epochs - 1)): 
             eval = self.evaluation3D(
                 self.config, 
                 pipeline, 

@@ -6,8 +6,8 @@ from Training import Training
 import torch
 
 class TrainingConditional(Training):
-    def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, trainingCircularMasks, evaluation2D, evaluation3D, pipelineFactory):
-        super().__init__(config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory)
+    def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, trainingCircularMasks, evaluation2D, evaluation3D, pipelineFactory, multi_sample=False):
+        super().__init__(config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory, multi_sample)
         self.trainingCircularMasks = trainingCircularMasks
 
     def _get_training_input(self, batch, generator=None):
