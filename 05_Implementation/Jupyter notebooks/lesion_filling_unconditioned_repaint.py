@@ -40,9 +40,10 @@ class TrainingConfig:
     masks_eval_path = "./datasets/filling/dataset_eval/masks"  
     train_only_connected_masks=False  # No Training with lesion masks
     eval_only_connected_masks=False 
-    num_inference_steps=50
-    mode = "eval" # train / eval
-    debug = True
+    num_inference_steps=50 
+    log_csv = False
+    mode = "train" # train / eval
+    debug = False
     jump_length=8
     jump_n_sample=10 
     #uniform_dataset_path = "./uniform_dataset"
@@ -168,57 +169,39 @@ import PipelineFactories
 
 config.conditional_data = "None"
 
+args = {
+    "config": config, 
+    "model": model, 
+    "noise_scheduler": noise_scheduler, 
+    "optimizer": optimizer, 
+    "lr_scheduler": lr_scheduler, 
+    "datasetTrain": datasetTrain, 
+    "datasetEvaluation": datasetEvaluation, 
+    "dataset3DEvaluation": dataset3DEvaluation, 
+    "evaluation2D": Evaluation2DFilling,
+    "evaluation3D": Evaluation3DFilling, 
+    "pipelineFactory": PipelineFactories.get_repaint_pipeline,
+    "deactivate3Devaluation": config.deactivate3Devaluation,
+    "evaluation_pipeline_parameters": {
+                "jump_length": config.jump_length,
+                "jump_n_sample": config.jump_n_sample,
+            }} 
+
+trainingRepaint = TrainingUnconditional(**args)
+
 
 # In[10]:
 
 
-if config.mode == "train":
-    args = {
-        "config": config, 
-        "model": model, 
-        "noise_scheduler": noise_scheduler, 
-        "optimizer": optimizer, 
-        "lr_scheduler": lr_scheduler, 
-        "datasetTrain": datasetTrain, 
-        "datasetEvaluation": datasetEvaluation, 
-        "dataset3DEvaluation": dataset3DEvaluation, 
-        "evaluation2D": Evaluation2DFilling,
-        "evaluation3D": Evaluation3DFilling, 
-        "pipelineFactory": PipelineFactories.get_repaint_pipeline,
-        "deactivate3Devaluation": config.deactivate3Devaluation,
-        "evaluation_pipeline_parameters": {
-                    "jump_length": config.jump_length,
-                    "jump_n_sample": config.jump_n_sample,
-                }} 
-    
-    trainingRepaint = TrainingUnconditional(**args)
+if config.mode == "train": 
     trainingRepaint.train()
 
 
-# In[11]:
+# In[ ]:
 
 
 if config.mode == "eval": # Nr. 17 has around ~80 2D slides with mask content
-    config.deactivate3Devaluation = False
-    args = {
-        "config": config, 
-        "model": model, 
-        "noise_scheduler": noise_scheduler, 
-        "optimizer": optimizer, 
-        "lr_scheduler": lr_scheduler, 
-        "datasetTrain": datasetTrain, 
-        "datasetEvaluation": datasetEvaluation, 
-        "dataset3DEvaluation": dataset3DEvaluation, 
-        "evaluation2D": Evaluation2DFilling,
-        "evaluation3D": Evaluation3DFilling, 
-        "pipelineFactory": PipelineFactories.get_repaint_pipeline, 
-        "deactivate3Devaluation": config.deactivate3Devaluation,
-        "evaluation_pipeline_parameters": {
-                    "jump_length": config.jump_length,
-                    "jump_n_sample": config.jump_n_sample,
-                }} 
-    
-    trainingRepaint = TrainingUnconditional(**args)
+    trainingRepaint.config.deactivate3Devaluation = False 
     pipeline = RePaintPipeline.from_pretrained(config.output_dir) 
     trainingRepaint.evaluate(pipeline)
 
@@ -230,3 +213,21 @@ print("Finished Training")
 
 
 # In[ ]:
+
+
+#create python script for ubelix 
+import os
+
+get_ipython().system('jupyter nbconvert --to script "lesion_filling_unconditioned_repaint.ipynb"')
+filename="lesion_filling_unconditioned_repaint.py"
+
+# delete this cell from python file
+lines = []
+with open(filename, 'r') as fp:
+    lines = fp.readlines()
+with open(filename, 'w') as fp:
+    for number, line in enumerate(lines):
+        if number < len(lines)-17: 
+            fp.write(line)
+
+

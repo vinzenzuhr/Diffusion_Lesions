@@ -17,15 +17,18 @@ from dataclasses import dataclass
 @dataclass
 class TrainingConfig:
     image_size = 256  # TODO: the generated image resolution
+    image_shape = (256,256,160)
     channels = 1 
     train_batch_size = 4
     eval_batch_size = 4
-    num_epochs = 80 #600 # one epoch needs ~12min (x2 GPU)
+    num_samples_per_batch = 1
+    num_epochs = 80 # one epoch needs ~12min (x2 GPU), because their are more training samples due connected_components
     gradient_accumulation_steps = 1
     learning_rate = 1e-4
     lr_warmup_steps = 100 #500
-    evaluate_epochs = 20
-    evaluate_num_batches = 20 # one batch needs ~15s.  
+    evaluate_epochs = 5
+    deactivate3Devaluation = True
+    evaluate_num_batches = -1 # one batch needs ~15s.  
     evaluate_3D_epochs = 1000  # one 3D evaluation needs ~20min
     save_model_epochs = 60
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
@@ -39,8 +42,10 @@ class TrainingConfig:
     train_only_connected_masks=True
     eval_only_connected_masks=False
     num_inference_steps=50
+    log_csv = False
     mode = "train" # train / eval
-    debug = True 
+    debug = True
+    brightness_augmentation = True
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub
     #hub_model_id = "<your-username>/<my-awesome-model>"  # the name of the repository to create on the HF Hub
@@ -82,9 +87,16 @@ accelerate.commands.config.default.write_basic_config(config.mixed_precision)
 from DatasetMRI2D import DatasetMRI2D
 from DatasetMRI3D import DatasetMRI3D
 from pathlib import Path
+from torchvision import transforms
+from transform_utils import ScaleDecorator 
+
+#add augmentation
+transformations = None
+if config.brightness_augmentation:
+    transformations = transforms.RandomApply([ScaleDecorator(transforms.ColorJitter(brightness=1))], p=0.5)
 
 #create dataset
-datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), root_dir_masks=Path(config.masks_train_path), only_connected_masks=config.train_only_connected_masks)
+datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), root_dir_masks=Path(config.masks_train_path), only_connected_masks=config.train_only_connected_masks, transforms=transformations)
 datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks)
 dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks)
 
@@ -214,7 +226,7 @@ args = {
 trainingLesions = TrainingConditional(**args)
 
 
-# In[12]:
+# In[11]:
 
 
 if config.mode == "train":

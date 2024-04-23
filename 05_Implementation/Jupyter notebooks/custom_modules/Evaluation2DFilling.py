@@ -30,7 +30,7 @@ class Evaluation2DFilling(Evaluation2D):
         inpainted_images = self.pipeline(
             voided_images,
             masks,
-            generator=torch.cuda.manual_seed_all(self.config.seed), 
+            generator=torch.Generator().manual_seed(self.config.seed), 
             num_inference_steps = self.config.num_inference_steps,
             **parameters
         ).images 

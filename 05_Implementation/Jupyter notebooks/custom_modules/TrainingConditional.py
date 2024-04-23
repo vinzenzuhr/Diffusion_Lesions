@@ -45,8 +45,7 @@ class TrainingConditional(Training):
                 self.d2_eval_dataloader, 
                 None if not self.accelerator.is_main_process else self.tb_summary, 
                 self.accelerator, 
-                self._get_training_input,
-                self.log_csv)
+                self._get_training_input)
             eval.evaluate(self.global_step)
 
         # Evaluate 3D images composed of 2D slices
@@ -56,8 +55,7 @@ class TrainingConditional(Training):
                 pipeline, 
                 self.d3_eval_dataloader, 
                 None if not self.accelerator.is_main_process else self.tb_summary, 
-                self.accelerator,
-                self.log_csv)  
+                self.accelerator)  
             eval.evaluate(self.global_step)
     
         # Save model

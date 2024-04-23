@@ -9,8 +9,8 @@ from scipy.ndimage import label
 from tqdm.auto import tqdm
 
 class DatasetMRI3D(DatasetMRI):
-    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, root_dir_synthesis: Path = None, directDL: bool = True, seed: int = None, only_connected_masks: bool = True):
-        super().__init__(root_dir_img, root_dir_segm, root_dir_masks, root_dir_synthesis, directDL, seed, only_connected_masks)
+    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, root_dir_synthesis: Path = None, directDL: bool = True, only_connected_masks: bool = True):
+        super().__init__(root_dir_img, root_dir_segm, root_dir_masks, root_dir_synthesis, directDL, only_connected_masks)
 
         idx_dict=0 
         for idx_t1n in tqdm(np.arange(len(self.list_paths_t1n))): 
@@ -48,14 +48,13 @@ class DatasetMRI3D(DatasetMRI):
             if self.only_connected_masks:
                 component_matrix_path = self.idx_to_element[idx][3]
                 components = self.idx_to_element[idx][4]
-            synthesis_path = self.idx_to_element[idx][5]
+            synthesis_path = self.idx_to_element[idx][5] 
 
             # load t1n img
-            t1n_img = nib.load(t1n_path)
-            t1n_img_orig = t1n_img.get_fdata()
+            t1n_img = nib.load(t1n_path)   
 
             # preprocess t1n
-            t1n_img, t1n_max_v = self.preprocess(t1n_img_orig)  
+            t1n_img, proc_info = self.preprocess(t1n_img)  
 
             # load segmentation
             if(segm_path):
@@ -112,10 +111,9 @@ class DatasetMRI3D(DatasetMRI):
                 "segm": t1n_segm, 
                 "mask": mask.unsqueeze(0),
                 "synthesis": synthesis_mask.unsqueeze(0),
-                "max_v": t1n_max_v, 
                 "idx": int(idx), 
                 "name": t1n_path.parent.stem,
-                "original_shape": [t1n_img_orig.shape]
+                "proc_info": [proc_info]
             } 
             return sample_dict
     

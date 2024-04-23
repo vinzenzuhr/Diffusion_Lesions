@@ -48,12 +48,12 @@ class Evaluation2D(ABC):
 
         return lpips
 
-    def _reset_seed(self, seed): 
-        np.random.seed(seed) 
-        torch.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-        random.seed(seed)
-        return
+    #def _reset_seed(self, seed): 
+    #    np.random.seed(seed) 
+    #    torch.manual_seed(seed)
+    #    torch.cuda.manual_seed_all(seed)
+    #    random.seed(seed)
+    #    return
 
     def _save_image(self, images: list[list[PIL.Image]], titles: list[str], path: Path, global_step: int):
         os.makedirs(path, exist_ok=True)
@@ -81,10 +81,14 @@ class Evaluation2D(ABC):
          
         self.progress_bar = tqdm(total=len(self.dataloader) if self.config.evaluate_num_batches == -1 else self.config.evaluate_num_batches, disable=not self.accelerator.is_local_main_process) 
         self.progress_bar.set_description(f"Evaluation 2D")  
-        self._reset_seed(self.config.seed)
+        #self._reset_seed(self.config.seed)
+        if hasattr(self.dataloader._index_sampler, "sampler"):
+            self.dataloader._index_sampler.sampler.generator.manual_seed(self.config.seed)
+        else:
+            self.dataloader._index_sampler.batch_sampler.sampler.generator.manual_seed(self.config.seed)
         for n_iter, batch in enumerate(self.dataloader): 
             # calc validation loss
-            input, noise, timesteps = self._get_training_input(batch)   
+            input, noise, timesteps = self._get_training_input(batch, generator=torch.Generator(device=self.accelerator.device).manual_seed(self.config.seed))   
             noise_pred = self.pipeline.unet(input, timesteps, return_dict=False)[0]
             loss = F.mse_loss(noise_pred, noise)          
             all_loss = self.accelerator.gather_for_metrics(loss).mean() 

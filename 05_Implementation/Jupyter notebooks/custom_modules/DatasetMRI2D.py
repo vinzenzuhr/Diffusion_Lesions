@@ -9,11 +9,29 @@ import os
 from tqdm.auto import tqdm
 
 class DatasetMRI2D(DatasetMRI):
-    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, root_dir_synthesis: Path = None, directDL: bool = True, seed: int = None, only_connected_masks: bool = True, num_samples=1):
+    def __init__(
+        self, 
+        root_dir_img: Path, 
+        root_dir_segm: Path = None, 
+        root_dir_masks: Path = None, 
+        root_dir_synthesis: Path = None, 
+        directDL: bool = True, 
+        only_connected_masks: bool = True, 
+        num_samples=1,
+        transforms=None):
         # if num samples >1 the idx_to_element dict is sorted and has packages of num_samples slices which correspond next to each other
+        # only transforms which doesn't change the mask or segmentation are allowed
 
-        super().__init__(root_dir_img, root_dir_segm, root_dir_masks, root_dir_synthesis, directDL, seed, only_connected_masks)
+        super().__init__(
+            root_dir_img, 
+            root_dir_segm, 
+            root_dir_masks, 
+            root_dir_synthesis, 
+            directDL, 
+            only_connected_masks)
+        
         self.num_samples = num_samples
+        self.transforms = transforms
         
         if(root_dir_synthesis and not root_dir_masks):
             raise ValueError(f"If root_dir_masks_synthesis is given, then root_dir_masks is mandatory")
@@ -74,18 +92,17 @@ class DatasetMRI2D(DatasetMRI):
             idx_slice = self.idx_to_element[idx][6] 
 
             # load t1n img
-            t1n_img = nib.load(t1n_path)
-            t1n_img = t1n_img.get_fdata()
+            t1n_img = nib.load(t1n_path) 
+            #t1n_img = t1n_img.get_fdata()
 
             # preprocess t1n
-            t1n_img, t1n_max_v = self.preprocess(t1n_img)
+            t1n_img, _ = self.preprocess(t1n_img)
 
             # get 2D slice from 3D 
             #t1n_slice = t1n_img.index_select(dim=1, index=torch.tensor(slice_indices))
             t1n_slice = t1n_img[:,idx_slice:idx_slice+self.num_samples,:].permute(1, 0, 2)
             if self.num_samples > 1:
                 t1n_slice = t1n_slice.unsqueeze(1)
-
 
             # load segmentation
             if(segm_path):
@@ -146,13 +163,16 @@ class DatasetMRI2D(DatasetMRI):
             else:
                 synthesis_slice = torch.empty(0)
 
+            # apply transforms
+            if self.transforms:
+                t1n_slice = self.transforms(t1n_slice)
+
             # Output data
             sample_dict = {
                 "gt_image": t1n_slice,
                 "segm": t1n_segm_slice, 
                 "mask": mask_slice,
-                "synthesis": synthesis_slice,
-                "max_v": t1n_max_v,
+                "synthesis": synthesis_slice, 
                 "idx": int(idx),
                 "idx_slice": idx_slice, 
                 "name": t1n_path.parent.stem,

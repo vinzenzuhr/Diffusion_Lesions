@@ -40,15 +40,11 @@ class Evaluation3D(ABC):
             # go through sample in batch
             for sample_idx in torch.arange(batch["gt_image"].shape[0]):
                 
-                max_v = batch["max_v"][sample_idx]
                 idx = batch["idx"][sample_idx]
                 name = batch["name"][sample_idx]
-                image_shape = batch["original_shape"][sample_idx] 
+                proc_info = batch["proc_info"][sample_idx]
 
                 images, clean_images, slice_indices, masks = self._start_pipeline(batch, sample_idx, parameters)    
-                
-
-
             
                 #overwrite the original 3D image with the modified 2D slices
                 final_3d_images = torch.clone(clean_images.detach()) 
@@ -56,7 +52,7 @@ class Evaluation3D(ABC):
 
                 #calculate metrics
                 all_clean_images = self.accelerator.gather_for_metrics(clean_images)
-                all_3d_images = self.accelerator.gather_for_metrics(final_3d_images) 
+                all_3d_images = self.accelerator.gather_for_metrics(final_3d_images)
                 all_masks = self.accelerator.gather_for_metrics(masks)
                 new_metrics = EvaluationUtils.calc_metrics(all_clean_images, all_3d_images, all_masks)
 
@@ -65,10 +61,10 @@ class Evaluation3D(ABC):
                 num_iterations += 1
             
                 #postprocess and save image as nifti file
-                final_3d_images = DatasetMRI.postprocess(final_3d_images, max_v, reference_shape = image_shape)  
+                final_3d_images = DatasetMRI.postprocess(final_3d_images.squeeze(), *proc_info, self.dataloader.dataset.get_metadata(int(idx)))  
                 save_dir = os.path.join(self.config.output_dir, f"samples_3D/{name}") 
                 os.makedirs(save_dir, exist_ok=True)
-                DatasetMRI.save(final_3d_images, f"{save_dir}/T1.nii.gz", **self.dataloader.dataset.get_metadata(int(idx)))
+                DatasetMRI.save(final_3d_images, f"{save_dir}/T1.nii.gz")
 
             self.progress_bar.update(1)
         

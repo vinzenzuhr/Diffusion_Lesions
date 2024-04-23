@@ -42,9 +42,9 @@ class TrainingConfig:
     num_inference_steps=50
     log_csv = True
     add_lesion_technique = "mean_intensity" # 'mean_intensity' or 'other_lesions'
-    intermediate_timestep = 25 # starting from this timesteps. num_inference_steps means the whole pipeline and 1 the last step. 
-    mode = "eval" # 'train', 'eval' or "tuning_timestep"
-    debug = True 
+    intermediate_timestep = 3 # starting from this timesteps. num_inference_steps means the whole pipeline and 1 the last step. 
+    mode = "tuning_timestep" # 'train', 'eval' or "tuning_timestep"
+    debug = False 
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub 
     seed = 0
@@ -56,11 +56,12 @@ config = TrainingConfig()
 
 if config.debug:
     config.num_inference_steps = 1
+    config.intermediate_timestep = 1
     config.train_batch_size = 1
     config.eval_batch_size = 1
     config.train_only_connected_masks=False
     config.eval_only_connected_masks=False
-    config.evaluate_num_batches = 1
+    config.evaluate_num_batches = 3
     config.deactivate3Devaluation = False
     #dataset_train_path = "./dataset_eval/imgs"
     #segm_train_path = "./dataset_eval/segm"
@@ -70,14 +71,6 @@ if config.debug:
 # In[4]:
 
 
-config.deactivate3Devaluation = True
-config.num_inference_steps = 50
-config.intermediate_timestep = 1
-
-
-# In[5]:
-
-
 #setup huggingface accelerate
 import torch
 import numpy as np
@@ -85,7 +78,7 @@ import accelerate
 accelerate.commands.config.default.write_basic_config(config.mixed_precision)
 
 
-# In[6]:
+# In[5]:
 
 
 from DatasetMRI2D import DatasetMRI2D
@@ -100,7 +93,7 @@ dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), 
 
 # ### Finding good intensity of lesions
 
-# In[7]:
+# In[6]:
 
 
 from pathlib import Path
@@ -134,7 +127,7 @@ if False:
     print("median lesion intensity: ", t1w_big[lesion_big.to(torch.bool)].median()) # 0.1829
 
 
-# In[8]:
+# In[7]:
 
 
 import matplotlib.pyplot as plt 
@@ -159,7 +152,7 @@ fig.show()
 
 # ### Training
 
-# In[9]:
+# In[8]:
 
 
 #create model
@@ -192,7 +185,7 @@ model = UNet2DModel(
 config.model = "UNet2DModel"
 
 
-# In[10]:
+# In[9]:
 
 
 #setup noise scheduler
@@ -205,7 +198,7 @@ noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
 config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
 
 
-# In[11]:
+# In[10]:
 
 
 # setup lr scheduler
@@ -221,7 +214,7 @@ lr_scheduler = get_cosine_schedule_with_warmup(
 config.lr_scheduler = "cosine_schedule_with_warmup"
 
 
-# In[12]:
+# In[11]:
 
 
 from TrainingUnconditional import TrainingUnconditional
@@ -248,14 +241,14 @@ args = {
 trainingSynthesis = TrainingUnconditional(**args) 
 
 
-# In[13]:
+# In[12]:
 
 
 if config.mode == "train":
     trainingSynthesis.train()
 
 
-# In[14]:
+# In[ ]:
 
 
 if config.mode == "eval":
@@ -266,40 +259,20 @@ if config.mode == "eval":
 # In[ ]:
 
 
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
+import os
 
 if config.mode == "tuning_timestep":
     pipeline = DDIMGuidedPipeline.from_pretrained(config.output_dir)
     original_output_dir = config.output_dir 
-    timesteps = [1,5,10,15,20,25,30]
+    timesteps = [1, 2, 3, 4, 5, 7, 9, 12, 15, 20]
     for t in timesteps:
         config.intermediate_timestep = t
         config.output_dir = original_output_dir + "_" + str(t)
-        args = {
-            "config": config, 
-            "model": model, 
-            "noise_scheduler": noise_scheduler, 
-            "optimizer": optimizer, 
-            "lr_scheduler": lr_scheduler, 
-            "datasetTrain": datasetTrain, 
-            "datasetEvaluation": datasetEvaluation, 
-            "dataset3DEvaluation": dataset3DEvaluation, 
-            "evaluation2D": Evaluation2DSynthesis,
-            "evaluation3D": Evaluation3DSynthesis, 
-            "pipelineFactory": PipelineFactories.get_ddim_guided_pipeline, 
-            "deactivate3Devaluation": config.deactivate3Devaluation} 
-        trainingSynthesis = TrainingUnconditional(**args) 
-        trainingSynthesis.evaluate(pipeline)
+        trainingSynthesis.config = config
+        if trainingSynthesis.accelerator.is_main_process:
+            os.makedirs(config.output_dir, exist_ok=True)
+            trainingSynthesis.log_meta_logs()
+        trainingSynthesis.evaluate(pipeline) 
 
 
 # In[ ]:
@@ -309,3 +282,9 @@ print("Finished Training")
 
 
 # In[ ]:
+
+
+#create python script for ubelix 
+import os
+
+get_ipython().system('jupyter nbconvert --to script "lesion_synthesis_unconditioned.ipynb"')

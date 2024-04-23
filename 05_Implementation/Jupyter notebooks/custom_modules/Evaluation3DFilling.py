@@ -53,7 +53,7 @@ class Evaluation3DFilling(Evaluation3D):
             new_images = self.pipeline(
                 chunk_voided_images,
                 chunk_masks,
-                generator=torch.cuda.manual_seed_all(self.config.seed), 
+                generator=torch.Generator().manual_seed(self.config.seed), 
                 num_inference_steps = self.config.num_inference_steps,
                 **parameters
             ).images

@@ -51,7 +51,7 @@ class Evaluation3DSynthesis(Evaluation3D):
             new_images = self.pipeline(
                 chunk_images,
                 timestep=self.config.intermediate_timestep,
-                generator=torch.cuda.manual_seed_all(self.config.seed), 
+                generator=torch.Generator().manual_seed(self.config.seed), 
                 num_inference_steps = self.config.num_inference_steps,
                 **parameters
             ).images

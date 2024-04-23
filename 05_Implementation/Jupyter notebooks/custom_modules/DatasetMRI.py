@@ -37,7 +37,7 @@ class DatasetMRI(Dataset):
 
     pad_shape = (256,256,256)
 
-    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, root_dir_synthesis: Path = None, directDL: bool = True, seed: int = None, only_connected_masks: bool = False):
+    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, root_dir_synthesis: Path = None, directDL: bool = True, only_connected_masks: bool = False):
         #Initialize variables
         self.root_dir_img = root_dir_img 
         self.directDL = directDL
@@ -58,8 +58,7 @@ class DatasetMRI(Dataset):
         else:
             self.list_paths_synthesis = None 
         self.list_paths_t1n = list(root_dir_img.rglob("*.nii.gz"))
-        self.idx_to_element = dict()
-        self.seed = seed  
+        self.idx_to_element = dict() 
         self.only_connected_masks = only_connected_masks
 
         if(root_dir_segm and (len(self.list_paths_t1n) != len(self.list_paths_segm))):
@@ -182,26 +181,30 @@ class DatasetMRI(Dataset):
         return t1n
 
     @staticmethod
-    def postprocess(t1n: torch.Tensor, t1n_max_v: float, reference_shape: tuple):
+    def _reorient_to_ras(t1n):
+        orientation = nib.orientations.axcodes2ornt(nib.aff2axcodes(t1n.affine))
+        orientation_ras = nib.orientations.axcodes2ornt(('R', 'A', 'S'))
+        t1n_transform = nib.orientations.ornt_transform(orientation, orientation_ras)
+        t1n_new = t1n.as_reoriented(t1n_transform)
+
+        inverse_orientation = nib.orientations.ornt_transform(orientation_ras, orientation) 
+
+        return t1n_new, inverse_orientation
+    
+    @staticmethod
+    def postprocess(t1n: torch.Tensor, t1n_max_v: float, t1n_shape: torch.tensor, inverse_orientation: np.ndarray, t1n_shape_before_padding, metadata: dict):
         """
         Transforms the images back to their original format.
         Maps from [-1,1] to [0,1] and scales to original max value.
-        
-        Args:
-            t1n (torch.Tensor): 3D t1n img
-            t1n_max_v (float): Maximal value of t1n image (used for normalization).
-            reference_shape (tuple): Shape the images will be transformed to
-
-        Returns:
-            t1n: The padded and cropped version of t1n.
+    
         """
-        #map images from [-1,1] to [0,1]
-        t1n = (t1n+1)/2
- 
+        #scale to original max value
+        t1n = (t1n+1)/2 
+        t1n *= t1n_max_v
 
         #remove padding
         d, w, h = t1n.shape[-3], t1n.shape[-2], t1n.shape[-1]
-        d_new, w_new, h_new = reference_shape
+        d_new, w_new, h_new = t1n_shape_before_padding
         
         d_unpad = max((d - d_new) / 2, 0)
         w_unpad = max((w - w_new) / 2, 0)
@@ -217,44 +220,62 @@ class DatasetMRI(Dataset):
         ) 
 
         t1n = t1n[..., unpadding[0]:unpadding[1], unpadding[2]:unpadding[3], unpadding[4]:unpadding[5]] 
-        #scale to original max value
-        t1n *= t1n_max_v
+        
+        #resize to original shape 
+        t1n = torch.nn.functional.interpolate(t1n.unsqueeze(0).unsqueeze(0), size=tuple(t1n_shape.squeeze().tolist()), mode='trilinear').squeeze()
+
+        #reorient image to original orientation
+        t1n = nib.nifti1.Nifti1Image(t1n.cpu().numpy(), **metadata) 
+        t1n = t1n.as_reoriented(inverse_orientation.squeeze().cpu().numpy())
+
         return t1n
 
     @staticmethod
-    def preprocess(t1n: np.ndarray):
+    def preprocess(t1n: nib.nifti1.Nifti1Image):
         """
         Transforms the images to a more unified format.
         Normalizes to -1,1. Pad and crop to bounding box.
         
         Args:
-            t1n (np.ndarray): batch of t1n from t1n file (ground truth). Shape: [B x D x W x H]
-
-        Raises:
-            UserWarning: When your input images are not (256, 256, 160)
+            t1n (nib.nifti1.Nifti1Image): t1n file (ground truth)
 
         Returns:
             t1n: The padded and cropped version of t1n.
             t1n_max_v: Maximal value of t1n image (used for normalization).
-        """   
+            transform: used transformation to reorient the image to RAS
+        """    
 
-        #Normalize the image to [0,1]
-        t1n[t1n<0] = 0 #Values below 0 are considered to be noise #TODO: Check validity
-        t1n_max_v = np.max(t1n)
-        t1n /= t1n_max_v
-
-        #pad the image to pad_shape
+        # reorient image to RAS
+        t1n, inverse_orientation = DatasetMRI._reorient_to_ras(t1n) 
+        t1n = t1n.get_fdata()         
         t1n = torch.Tensor(t1n)
+
+        # resize image if it is bigger than pad_shape
+        t1n_shape = torch.tensor([t1n.shape[-3], t1n.shape[-2], t1n.shape[-1]])
+        shape_max = torch.tensor(DatasetMRI.pad_shape)
+        diff = t1n_shape - shape_max
+        t1n_factor = 1
+        if diff.max() > 0: 
+            t1n_factor = shape_max[diff.argmax()] / t1n_shape[diff.argmax()]
+            t1n = torch.nn.functional.interpolate(t1n.unsqueeze(0).unsqueeze(0), scale_factor=t1n_factor.item()).squeeze()
+        
+        #pad the image to pad_shape
+        t1n_shape_before_padding = t1n.shape
         t1n = DatasetMRI._padding(t1n)
 
-        #map images from [0,1] to [-1,1] following the DDPM paper
+        #Normalize the image to [-1,1] following the DDPM paper
+        t1n[t1n<0] = 0 #Values below 0 are considered to be noise
+        t1n_max_v = torch.max(t1n)
+        t1n /= t1n_max_v # [0,1]
         t1n = (t1n*2) - 1
 
-        return t1n, t1n_max_v
+        proc_info = (t1n_max_v, t1n_shape, inverse_orientation, t1n_shape_before_padding)
+
+        return t1n, proc_info
     
     def get_metadata(self, idx):
         """
-        Returns the metadata of the idx-th element in the dataset.
+        Returns the metadata of the idx-th element in the dataset after reorienting it to RAS.
         
         Args:
             idx (int): Index of the element in the dataset
@@ -265,6 +286,8 @@ class DatasetMRI(Dataset):
         t1n_path = self.idx_to_element[idx][0] 
         # load t1n img
         t1n_img = nib.load(t1n_path) 
+        t1n_img, _ = DatasetMRI._reorient_to_ras(t1n_img)
+
         #get metadata
         metadata = {
             "affine": t1n_img.affine,
@@ -276,18 +299,12 @@ class DatasetMRI(Dataset):
         return metadata
 
     @staticmethod
-    def save(t1n: torch.Tensor, path: Path, affine: np.ndarray, header: nib.Nifti1Header = None, extra = None, file_map = None, dtype = None):
+    def save(t1n: torch.Tensor, path: Path):
         """
         Saves the t1n to a file.
         
         Args:
             t1n (torch.Tensor): 3D t1n img
-            path (Path): Path to save the t1n file
-            affine (np.ndarray): Affine matrix of the original t1n image
-            header (nib.Nifti1Header): Header of the original t1n image
-            extra: Extra information of the original t1n image
-            file_map: File map of the original t1n image
-            dtype: Data type of the original t1n image
-        """  
-        t1n = nib.nifti1.Nifti1Image(t1n.squeeze().cpu().numpy(), affine=affine, header=header, extra=extra, file_map=file_map, dtype=dtype)
+            path (Path): Path to save the t1n file 
+        """
         nib.save(t1n, path)

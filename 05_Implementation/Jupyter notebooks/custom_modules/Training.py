@@ -45,6 +45,8 @@ class Training(ABC):
         self.d2_eval_dataloader = get_dataloader(dataset = datasetEvaluation, batch_size = config.eval_batch_size, random_sampler=False, seed=self.config.seed, multi_sample=multi_sample)
         self.d3_eval_dataloader = get_dataloader(dataset = dataset3DEvaluation, batch_size = 1, random_sampler=False, seed=self.config.seed, multi_sample=False) 
 
+         
+
         if self.accelerator.is_main_process:
             #setup tensorboard
             self.tb_summary = SummaryWriter(config.output_dir, purge_step=0)
@@ -58,22 +60,12 @@ class Training(ABC):
         self.model, self.optimizer, self.train_dataloader, self.d2_eval_dataloader, self.d3_eval_dataloader, self.lr_scheduler = self.accelerator.prepare(
             self.model, self.optimizer, self.train_dataloader, self.d2_eval_dataloader, self.d3_eval_dataloader, self.lr_scheduler
         )
+ 
 
         os.makedirs(config.output_dir, exist_ok=True)  #evt. delete
 
         self.epoch = 0
-        self.global_step = 0
-
-    def _get_dataloader(self, dataset, batch_size, num_workers=4, random_sampler=False, seed=None): 
-        def _reset_seed(worker_id=0): 
-            np.random.seed(0) 
-            torch.manual_seed(0)
-            torch.cuda.manual_seed_all(0)
-            random.seed(0)
-            return
-
-        sampler = RandomSampler(dataset, generator=(None if random_sampler else torch.cuda.manual_seed_all(self.config.seed)))
-        return DataLoader(dataset, batch_size=batch_size, num_workers=num_workers, sampler=sampler, worker_init_fn=(None if random_sampler else _reset_seed))
+        self.global_step = 0 
     
     def _get_random_masks(self, n, generator=None):
         #create circular mask with random center around the center point of the pictures and a radius between 3 and 50 pixels
@@ -115,24 +107,24 @@ class Training(ABC):
             "evaluate_3D_epochs",
             "train_only_connected_masks",
             "eval_only_connected_masks",
-            "debug",]
-        if hasattr(self.config, "intermediate_timestep"):
-            scalars.append("intermediate_timestep")
+            "debug",
+            "brightness_augmentation",
+            "intermediate_timestep"] 
         texts = [
             "mixed_precision",
             "mode",
             "model",
             "noise_scheduler",
             "lr_scheduler",
-            "conditional_data",]
-        if hasattr(self.config, "add_lesion_technique"):
-            texts.append("add_lesion_technique")
-
+            "conditional_data",
+            "add_lesion_technique"] 
 
         for scalar in scalars:
-            self.tb_summary.add_scalar(scalar, getattr(self.config, scalar), 0)
+            if hasattr(self.config, scalar):
+                self.tb_summary.add_scalar(scalar, getattr(self.config, scalar), 0)
         for text in texts:
-            self.tb_summary.add_text(text, getattr(self.config, text), 0)
+            if hasattr(self.config, text):
+                self.tb_summary.add_text(text, getattr(self.config, text), 0)
             
         self.tb_summary.add_scalar("len(train_dataloader)", len(self.train_dataloader), 0)
         self.tb_summary.add_scalar("len(d2_eval_dataloader)", len(self.d2_eval_dataloader), 0)
