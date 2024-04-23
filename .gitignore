@@ -5,6 +5,7 @@
 04_Datasets
 05_Implementation/Jupyter notebooks/lesion-filling-256*
 05_Implementation/Jupyter notebooks/lesion-synthesis-256*
+05_Implementation/Jupyter notebooks/lesion-filling-3D-repaint
 *.npy
 __pycache__/
 06_Trainings/
