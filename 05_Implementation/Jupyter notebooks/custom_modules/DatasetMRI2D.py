@@ -117,8 +117,9 @@ class DatasetMRI2D(DatasetMRI):
                 # pad to pad_shape and get 2D slice from 3D
                 # make copy to avoid negative strides, which are not supported in Pytorch
                 t1n_segm = torch.Tensor(t1n_segm.copy())
+                t1n_segm = self.resize_image(t1n_segm)
                 t1n_segm = self._padding(t1n_segm)
-                t1n_segm_slice = t1n_segm[:,idx_slice:idx_slice+self.num_samples,:].reshape(-1, self.pad_shape[0], self.pad_shape[2])
+                t1n_segm_slice = t1n_segm[:,idx_slice:idx_slice+self.num_samples,:].reshape(-1, self.t1n_target_shape[0], self.t1n_target_shape[2])
                 if self.num_samples > 1:
                     t1n_segm_slice = t1n_segm_slice.unsqueeze(1)
             else:
@@ -144,9 +145,10 @@ class DatasetMRI2D(DatasetMRI):
 
                 # pad to pad_shape and get 2D slice from 3D 
                 mask = torch.Tensor(mask)
+                mask = self.resize_image(mask)
                 mask = self._padding(mask.to(torch.uint8)) 
                  
-                mask_slice = mask[:,idx_slice:idx_slice+self.num_samples,:].reshape(-1, self.pad_shape[0], self.pad_shape[2])
+                mask_slice = mask[:,idx_slice:idx_slice+self.num_samples,:].reshape(-1, self.t1n_target_shape[0], self.t1n_target_shape[2])
                 if self.num_samples > 1:
                     mask_slice = mask_slice.unsqueeze(1)
             else:
@@ -156,10 +158,11 @@ class DatasetMRI2D(DatasetMRI):
                 synthesis_mask = nib.load(synthesis_path)
                 synthesis_mask = synthesis_mask.get_fdata()
                 synthesis_mask = torch.Tensor(synthesis_mask)
+                synthesis_mask = self.resize_image(synthesis_mask)
                 synthesis_mask = self._padding(synthesis_mask.to(torch.uint8))
                 synthesis_slice = synthesis_mask[:,idx_slice:idx_slice+self.num_samples,:]
                 if self.num_samples > 1:
-                    synthesis_slice = synthesis_slice.reshape(-1, 1, self.pad_shape[0], self.pad_shape[2])
+                    synthesis_slice = synthesis_slice.reshape(-1, 1, self.t1n_target_shape[0], self.t1n_target_shape[2])
             else:
                 synthesis_slice = torch.empty(0)
 

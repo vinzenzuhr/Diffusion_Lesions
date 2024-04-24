@@ -69,6 +69,7 @@ class DatasetMRI3D(DatasetMRI):
                 # pad to pad_shape
                 # make copy to avoid negative strides, which are not supported in Pytorch
                 t1n_segm = torch.Tensor(t1n_segm.copy())
+                t1n_segm = self.resize_image(t1n_segm)
                 t1n_segm = self._padding(t1n_segm) 
             else:
                 t1n_segm = torch.empty(0)  
@@ -93,6 +94,7 @@ class DatasetMRI3D(DatasetMRI):
                         mask = binary_white_matter_segm * mask 
 
                 mask = torch.Tensor(mask)
+                mask = self.resize_image(mask)
                 mask = self._padding(mask.to(torch.uint8))
             else:
                 mask = torch.empty(0)
@@ -101,6 +103,7 @@ class DatasetMRI3D(DatasetMRI):
                 synthesis_mask = nib.load(synthesis_path)
                 synthesis_mask = synthesis_mask.get_fdata()
                 synthesis_mask = torch.Tensor(synthesis_mask)
+                synthesis_mask = self.resize_image(synthesis_mask)
                 synthesis_mask = self._padding(synthesis_mask.to(torch.uint8))
             else:
                 synthesis_mask = torch.empty(0) 
