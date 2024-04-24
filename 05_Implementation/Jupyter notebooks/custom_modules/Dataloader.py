@@ -8,7 +8,7 @@ import copy
 from typing import Optional, Dict, Union, Type, Tuple, Callable
 from torch.utils.data import DataLoader
 from torch.utils.data import RandomSampler 
-from torch.utils.data._utils.collate import default_collate_err_msg_format, default_collate_fn_map
+from torch.utils.data._utils.collate import default_collate_err_msg_format, default_collate_fn_map, default_collate
 import numpy as np
 import torch
 import random    
@@ -101,10 +101,7 @@ def collate(batch, *, collate_fn_map: Optional[Dict[Union[Type, Tuple[Type, ...]
                 # or `__init__(iterable)` (e.g., `range`).
                 return [collate(samples, collate_fn_map=collate_fn_map, multi_sample=multi_sample) for samples in transposed]
 
-    raise TypeError(default_collate_err_msg_format.format(elem_type))
-
-def default_collate(batch):
-    return collate(batch, collate_fn_map=default_collate_fn_map)
+    raise TypeError(default_collate_err_msg_format.format(elem_type)) 
 
 def collate_multi_sample(batch):
     return collate(batch, collate_fn_map=default_collate_fn_map, multi_sample=True)
