@@ -36,7 +36,7 @@ class Evaluation3D(ABC):
         self.progress_bar.set_description(f"Evaluation 3D") 
  
         print("Start 3D evaluation")
-        for batch in self.dataloader: 
+        for n_iter, batch in enumerate(self.dataloader): 
             # go through sample in batch
             for sample_idx in torch.arange(batch["gt_image"].shape[0]):
                 
@@ -67,6 +67,9 @@ class Evaluation3D(ABC):
                 DatasetMRI.save(final_3d_images, f"{save_dir}/T1.nii.gz")
 
             self.progress_bar.update(1)
+            
+            if (self.config.evaluate_num_batches != -1) and (n_iter >= self.config.evaluate_num_batches-1):
+                break 
         
         # calculcate mean of metrics and log them
         for key, value in metrics.items():
