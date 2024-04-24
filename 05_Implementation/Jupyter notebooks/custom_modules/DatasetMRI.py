@@ -35,7 +35,7 @@ class DatasetMRI(Dataset):
             
     """
 
-    pad_shape = (256,256,256)
+    
 
     def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, root_dir_synthesis: Path = None, directDL: bool = True, only_connected_masks: bool = False):
         #Initialize variables
@@ -48,18 +48,14 @@ class DatasetMRI(Dataset):
             for folder in folder_list:
                 self.list_paths_masks.append(list(folder.rglob("*.nii.gz")))
         else:
-            self.list_paths_masks = None
-        if(root_dir_segm):
-            self.list_paths_segm = list(root_dir_segm.rglob("*.nii.gz"))
-        else:
-            self.list_paths_segm = None 
-        if(root_dir_synthesis):
-            self.list_paths_synthesis = list(root_dir_synthesis.rglob("*.nii.gz"))
-        else:
-            self.list_paths_synthesis = None 
+            self.list_paths_masks = None 
+
+        self.list_paths_segm = list(root_dir_segm.rglob("*.nii.gz")) if root_dir_segm else None 
+        self.list_paths_synthesis = list(root_dir_synthesis.rglob("*.nii.gz")) if root_dir_synthesis else None 
         self.list_paths_t1n = list(root_dir_img.rglob("*.nii.gz"))
         self.idx_to_element = dict() 
         self.only_connected_masks = only_connected_masks
+        self.t1n_target_shape = (256,256)
 
         if(root_dir_segm and (len(self.list_paths_t1n) != len(self.list_paths_segm))):
             raise ValueError(f"The amount of T1n files and segm files must be the same. Got {len(self.list_paths_t1n)} and {len(self.list_paths_segm)}")        
@@ -148,8 +144,7 @@ class DatasetMRI(Dataset):
         
         return t1n_mask
 
-    @staticmethod
-    def _padding(t1n: torch.tensor):
+    def _padding(self, t1n: torch.tensor):
         """
         Pads the images to the pad_shape. 
 
@@ -161,10 +156,10 @@ class DatasetMRI(Dataset):
         """
 
         #pad to bounding box
-        d_max, w_max, h_max = DatasetMRI.pad_shape
+        d_max, w_max, h_max = DatasetMRI.self.unet_img_shape
         d, w, h = t1n.shape[-3], t1n.shape[-2], t1n.shape[-1] 
 
-        assert d <= d_max and w <= w_max and h <= h_max, f"The shape of the input image ({t1n.shape}) is bigger than pad_shape ({DatasetMRI.pad_shape})"
+        assert d <= d_max and w <= w_max and h <= h_max, f"The shape of the input image ({t1n.shape}) is bigger than pad_shape ({self.t1n_target_shape})"
 
         d_pad = max((d_max - d) / 2, 0)
         w_pad = max((w_max - w) / 2, 0)
@@ -191,8 +186,33 @@ class DatasetMRI(Dataset):
 
         return t1n_new, inverse_orientation
     
+    def get_metadata(self, idx):
+        """
+        Returns the metadata of the idx-th element in the dataset after reorienting it to RAS.
+        
+        Args:
+            idx (int): Index of the element in the dataset
+        
+        Returns:
+            metadata (dict): Metadata containing the affine matrix, header, extra information, file map and data type of the original t1n image
+        """
+        t1n_path = self.idx_to_element[idx][0] 
+        # load t1n img
+        t1n_img = nib.load(t1n_path) 
+        t1n_img, _ = DatasetMRI._reorient_to_ras(t1n_img)
+
+        #get metadata
+        metadata = {
+            "affine": t1n_img.affine,
+            "header": t1n_img.header,
+            "extra": t1n_img.extra,
+            "file_map": t1n_img.file_map,
+            "dtype": t1n_img.get_data_dtype()
+        }
+        return metadata
+    
     @staticmethod
-    def postprocess(t1n: torch.Tensor, t1n_max_v: float, t1n_shape: torch.tensor, inverse_orientation: np.ndarray, t1n_shape_before_padding, metadata: dict):
+    def postprocess(t1n: torch.Tensor, t1n_max_v: float, inverse_orientation: np.ndarray, t1n_shape_before_padding, metadata: dict):
         """
         Transforms the images back to their original format.
         Maps from [-1,1] to [0,1] and scales to original max value.
@@ -222,7 +242,7 @@ class DatasetMRI(Dataset):
         t1n = t1n[..., unpadding[0]:unpadding[1], unpadding[2]:unpadding[3], unpadding[4]:unpadding[5]] 
         
         #resize to original shape 
-        t1n = torch.nn.functional.interpolate(t1n.unsqueeze(0).unsqueeze(0), size=tuple(t1n_shape.squeeze().tolist()), mode='trilinear').squeeze()
+        t1n = torch.nn.functional.interpolate(t1n.unsqueeze(0).unsqueeze(0), size=tuple(t1n_shape_before_padding.squeeze().tolist()), mode='trilinear').squeeze()
 
         #reorient image to original orientation
         t1n = nib.nifti1.Nifti1Image(t1n.cpu().numpy(), **metadata) 
@@ -230,8 +250,7 @@ class DatasetMRI(Dataset):
 
         return t1n
 
-    @staticmethod
-    def preprocess(t1n: nib.nifti1.Nifti1Image):
+    def preprocess(self, t1n: nib.nifti1.Nifti1Image):
         """
         Transforms the images to a more unified format.
         Normalizes to -1,1. Pad and crop to bounding box.
@@ -250,18 +269,12 @@ class DatasetMRI(Dataset):
         t1n = t1n.get_fdata()         
         t1n = torch.Tensor(t1n)
 
-        # resize image if it is bigger than pad_shape
-        t1n_shape = torch.tensor([t1n.shape[-3], t1n.shape[-2], t1n.shape[-1]])
-        shape_max = torch.tensor(DatasetMRI.pad_shape)
-        diff = t1n_shape - shape_max
-        t1n_factor = 1
-        if diff.max() > 0: 
-            t1n_factor = shape_max[diff.argmax()] / t1n_shape[diff.argmax()]
-            t1n = torch.nn.functional.interpolate(t1n.unsqueeze(0).unsqueeze(0), scale_factor=t1n_factor.item()).squeeze()
+        # resize image if it is bigger than pad_shape   
+        t1n = self.resize_image(t1n)
         
         #pad the image to pad_shape
         t1n_shape_before_padding = t1n.shape
-        t1n = DatasetMRI._padding(t1n)
+        t1n = self._padding(t1n)
 
         #Normalize the image to [-1,1] following the DDPM paper
         t1n[t1n<0] = 0 #Values below 0 are considered to be noise
@@ -269,34 +282,18 @@ class DatasetMRI(Dataset):
         t1n /= t1n_max_v # [0,1]
         t1n = (t1n*2) - 1
 
-        proc_info = (t1n_max_v, t1n_shape, inverse_orientation, t1n_shape_before_padding)
+        proc_info = (t1n_max_v, inverse_orientation, t1n_shape_before_padding)
 
         return t1n, proc_info
-    
-    def get_metadata(self, idx):
-        """
-        Returns the metadata of the idx-th element in the dataset after reorienting it to RAS.
-        
-        Args:
-            idx (int): Index of the element in the dataset
-        
-        Returns:
-            metadata (dict): Metadata containing the affine matrix, header, extra information, file map and data type of the original t1n image
-        """
-        t1n_path = self.idx_to_element[idx][0] 
-        # load t1n img
-        t1n_img = nib.load(t1n_path) 
-        t1n_img, _ = DatasetMRI._reorient_to_ras(t1n_img)
 
-        #get metadata
-        metadata = {
-            "affine": t1n_img.affine,
-            "header": t1n_img.header,
-            "extra": t1n_img.extra,
-            "file_map": t1n_img.file_map,
-            "dtype": t1n_img.get_data_dtype()
-        }
-        return metadata
+    def resize_image(self, img):
+        img_shape = torch.tensor([img.shape[-3], img.shape[-2], img.shape[-1]])
+        shape_max = torch.tensor(self.t1n_target_shape)
+        diff = img_shape - shape_max
+        if diff.max() > 0: 
+            img_factor = shape_max[diff.argmax()] / img_shape[diff.argmax()]
+            img = torch.nn.functional.interpolate(img.unsqueeze(0).unsqueeze(0), scale_factor=img_factor.item()).squeeze()
+        return img
 
     @staticmethod
     def save(t1n: torch.Tensor, path: Path):
