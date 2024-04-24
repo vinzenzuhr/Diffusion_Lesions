@@ -117,7 +117,9 @@ class Training(ABC):
             "noise_scheduler",
             "lr_scheduler",
             "conditional_data",
-            "add_lesion_technique"] 
+            "add_lesion_technique",
+            "dataset_train_path",
+            "dataset_eval_path"] 
 
         for scalar in scalars:
             if hasattr(self.config, scalar):
