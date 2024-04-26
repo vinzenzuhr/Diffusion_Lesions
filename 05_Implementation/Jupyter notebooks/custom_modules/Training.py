@@ -10,6 +10,9 @@ from torch.utils.data import RandomSampler
 import torch.nn.functional as F
 from tqdm.auto import tqdm
 from Dataloader import get_dataloader
+#from accelerate.utils import InitProcessGroupKwargs
+#from datetime import timedelta
+
 
 class Training(ABC):
     def __init__(
@@ -39,6 +42,7 @@ class Training(ABC):
             mixed_precision=config.mixed_precision,
             gradient_accumulation_steps=config.gradient_accumulation_steps, 
             project_dir=os.path.join(config.output_dir, "tensorboard"), #evt. delete
+            #kwargs_handlers=[InitProcessGroupKwargs(timeout=timedelta(seconds=2 * 1800))],
         )
         
         self.train_dataloader = get_dataloader(dataset = datasetTrain, batch_size = config.train_batch_size, random_sampler=True, seed=self.config.seed, multi_sample=multi_sample)
@@ -95,8 +99,7 @@ class Training(ABC):
 
     def log_meta_logs(self):
         #log at tensorboard
-        scalars = [
-            "image_size",
+        scalars = [              
             "train_batch_size",
             "eval_batch_size",
             "num_epochs",
@@ -131,6 +134,8 @@ class Training(ABC):
         self.tb_summary.add_scalar("len(train_dataloader)", len(self.train_dataloader), 0)
         self.tb_summary.add_scalar("len(d2_eval_dataloader)", len(self.d2_eval_dataloader), 0)
         self.tb_summary.add_scalar("len(d3_eval_dataloader)", len(self.d3_eval_dataloader), 0) 
+        self.tb_summary.add_scalar("img_target_shape_x", self.config.img_target_shape[0], 0) 
+        self.tb_summary.add_scalar("img_target_shape_y", self.config.img_target_shape[1], 0) 
 
         if self.config.log_csv:
             with open(os.path.join(self.config.output_dir, "metrics.csv"), "w") as f:
