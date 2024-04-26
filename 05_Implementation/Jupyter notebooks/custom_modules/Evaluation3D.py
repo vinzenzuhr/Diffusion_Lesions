@@ -50,7 +50,7 @@ class Evaluation3D(ABC):
                 final_3d_images = torch.clone(clean_images.detach()) 
                 final_3d_images[:, :, slice_indices, :] = images
 
-                #calculate metrics
+                #calculate metrics 
                 all_clean_images = self.accelerator.gather_for_metrics(clean_images)
                 all_3d_images = self.accelerator.gather_for_metrics(final_3d_images)
                 all_masks = self.accelerator.gather_for_metrics(masks)
@@ -68,7 +68,7 @@ class Evaluation3D(ABC):
 
             self.progress_bar.update(1)
             
-            if (self.config.evaluate_num_batches != -1) and (n_iter >= self.config.evaluate_num_batches-1):
+            if (self.config.evaluate_num_batches_3d != -1) and (n_iter >= self.config.evaluate_num_batches_3d-1):
                 break 
         
         # calculcate mean of metrics and log them
