@@ -15,8 +15,9 @@ class DatasetMRI2D(DatasetMRI):
         root_dir_segm: Path = None, 
         root_dir_masks: Path = None, 
         root_dir_synthesis: Path = None, 
-        directDL: bool = True, 
-        only_connected_masks: bool = True, 
+        img_target_shape = (256,256),     
+        only_connected_masks: bool = False,
+        min_area = 100, 
         num_samples=1,
         transforms=None):
         # if num samples >1 the idx_to_element dict is sorted and has packages of num_samples slices which correspond next to each other
@@ -27,11 +28,12 @@ class DatasetMRI2D(DatasetMRI):
             root_dir_segm, 
             root_dir_masks, 
             root_dir_synthesis, 
-            directDL, 
+            img_target_shape, 
             only_connected_masks)
         
         self.num_samples = num_samples
         self.transforms = transforms
+        self.min_area = min_area
         
         if(root_dir_synthesis and not root_dir_masks):
             raise ValueError(f"If root_dir_masks_synthesis is given, then root_dir_masks is mandatory")
@@ -41,12 +43,13 @@ class DatasetMRI2D(DatasetMRI):
         for idx_t1n in tqdm(np.arange(len(self.list_paths_t1n))): 
             slices_dicts = list()            
             # if there are masks restrict slices to mask content
-            if(self.list_paths_masks): 
+            if(self.list_paths_masks):  
                 # multiple masks for one t1n image are possible
-                for path_mask in self.list_paths_masks[idx_t1n]:
+                for path_mask in self.list_paths_masks[idx_t1n]: 
                     slices_dicts.append(
                         self._get_relevant_slices(
                             "mask", 
+                            path_t1n = self.list_paths_t1n[idx_t1n],
                             path_mask = path_mask, 
                             path_segm = self.list_paths_segm[idx_t1n] if self.list_paths_segm else None, 
                             path_synthesis = self.list_paths_synthesis[idx_t1n] if self.list_paths_synthesis else None)) 
@@ -55,11 +58,12 @@ class DatasetMRI2D(DatasetMRI):
                 slices_dicts.append(
                     self._get_relevant_slices(
                         procedure = "segmentation",  
+                        path_t1n = self.list_paths_t1n[idx_t1n],
                         path_segm = self.list_paths_segm[idx_t1n]))  
             # if there are no masks and no segmentations don't restrict slices  
             else:  
                 t1n_example = nib.load(self.list_paths_t1n[idx_t1n])
-                t1n_example = t1n_example.get_fdata()
+                t1n_example, _, _, _, _ = self.preprocess(t1n_example) 
                 slices_dicts.append({
                     "path_mask": None,
                     "path_segm": None,
@@ -93,76 +97,49 @@ class DatasetMRI2D(DatasetMRI):
 
             # load t1n img
             t1n_img = nib.load(t1n_path) 
-            #t1n_img = t1n_img.get_fdata()
+            mask = nib.load(mask_path) if mask_path else None 
+            t1n_segm = nib.load(segm_path) if segm_path else None 
+            synthesis_mask = nib.load(synthesis_path) if synthesis_path else None
 
-            # preprocess t1n
-            t1n_img, _ = self.preprocess(t1n_img)
+            # preprocess t1n, mask, segm and synthesis
+            t1n_img, _, mask, t1n_segm, synthesis_mask = self.preprocess(t1n_img, mask, t1n_segm, synthesis_mask)
 
-            # get 2D slice from 3D 
-            #t1n_slice = t1n_img.index_select(dim=1, index=torch.tensor(slice_indices))
+            # get 2D slice from 3D  
             t1n_slice = t1n_img[:,idx_slice:idx_slice+self.num_samples,:].permute(1, 0, 2)
             if self.num_samples > 1:
                 t1n_slice = t1n_slice.unsqueeze(1)
-
-            # load segmentation
-            if(segm_path):
-                t1n_segm = nib.load(segm_path)
-                t1n_segm = t1n_segm.get_fdata()
-
-                #transform segmentation if the segmentation came from Direct+DL
-                if(self.directDL):
-                    t1n_segm = np.transpose(t1n_segm)
-                    t1n_segm = np.flip(t1n_segm, axis=1)
-
-                # pad to pad_shape and get 2D slice from 3D
-                # make copy to avoid negative strides, which are not supported in Pytorch
-                t1n_segm = torch.Tensor(t1n_segm.copy())
-                t1n_segm = self.resize_image(t1n_segm)
-                t1n_segm = self._padding(t1n_segm)
-                t1n_segm_slice = t1n_segm[:,idx_slice:idx_slice+self.num_samples,:].reshape(-1, self.t1n_target_shape[0], self.t1n_target_shape[2])
+ 
+            # get 2D slice from 3D segmentation
+            if(t1n_segm != None):
+                # get 2D slice from 3D 
+                t1n_segm_slice = t1n_segm[:,idx_slice:idx_slice+self.num_samples,:].permute(1, 0, 2)
                 if self.num_samples > 1:
                     t1n_segm_slice = t1n_segm_slice.unsqueeze(1)
             else:
-                t1n_segm_slice = torch.empty(0)   
-
-            # load masks
-            if(mask_path): 
+                t1n_segm_slice = torch.empty(0)    
+            if(mask != None): 
                 if self.only_connected_masks: 
                     # create mask from random connected components
                     component_matrix = torch.load(component_matrix_path)
+                    assert component_matrix.shape == t1n_img.shape, f"Component matrix shape {component_matrix.shape} does not match t1n image shape {t1n_img.shape}"
                     rand_n = 1 if len(components) == 1 else torch.randint(1, len(components), (1,)).item() 
                     rand_components_idx = torch.randperm(len(components))[:rand_n] 
                     mask = torch.zeros_like(component_matrix)
                     for rand_idx in rand_components_idx: 
                         mask[component_matrix == components[rand_idx]] = 1  
-                else:
-                    mask = nib.load(mask_path)
-                    mask = mask.get_fdata() 
-                    # if there is a segmentation restrict mask to white matter regions
+                else: 
                     if(segm_path):
-                        binary_white_matter_segm = self._get_white_matter_segm(segm_path) 
-                        mask = binary_white_matter_segm * mask
-
-                # pad to pad_shape and get 2D slice from 3D 
-                mask = torch.Tensor(mask)
-                mask = self.resize_image(mask)
-                mask = self._padding(mask.to(torch.uint8)) 
-                 
-                mask_slice = mask[:,idx_slice:idx_slice+self.num_samples,:].reshape(-1, self.t1n_target_shape[0], self.t1n_target_shape[2])
+                        binary_white_matter_segm = self._get_white_matter_segm(t1n_segm) 
+                        mask = binary_white_matter_segm * mask 
+                mask_slice = mask[:,idx_slice:idx_slice+self.num_samples,:].permute(1, 0, 2)
                 if self.num_samples > 1:
                     mask_slice = mask_slice.unsqueeze(1)
             else:
-                mask_slice = torch.empty(0)   
-            
-            if(synthesis_path):
-                synthesis_mask = nib.load(synthesis_path)
-                synthesis_mask = synthesis_mask.get_fdata()
-                synthesis_mask = torch.Tensor(synthesis_mask)
-                synthesis_mask = self.resize_image(synthesis_mask)
-                synthesis_mask = self._padding(synthesis_mask.to(torch.uint8))
-                synthesis_slice = synthesis_mask[:,idx_slice:idx_slice+self.num_samples,:]
+                mask_slice = torch.empty(0)    
+            if(synthesis_mask != None): 
+                synthesis_slice = synthesis_mask[:,idx_slice:idx_slice+self.num_samples,:].permute(1, 0, 2)
                 if self.num_samples > 1:
-                    synthesis_slice = synthesis_slice.reshape(-1, 1, self.t1n_target_shape[0], self.t1n_target_shape[2])
+                    synthesis_slice = synthesis_slice.unsqueeze(1)
             else:
                 synthesis_slice = torch.empty(0)
 
@@ -179,6 +156,7 @@ class DatasetMRI2D(DatasetMRI):
                 "idx": int(idx),
                 "idx_slice": idx_slice, 
                 "name": t1n_path.parent.stem,
+                "mask_name": mask_path.parent.stem if mask_path else torch.empty(0),
             } 
             return sample_dict 
     
@@ -188,13 +166,11 @@ class DatasetMRI2D(DatasetMRI):
 
         relevant_components = []
         for component in slice_components:
-            min_area = 100
-            if (torch.count_nonzero(component_matrix[:,idx_slice,:]==component) >= min_area):
+            if (torch.count_nonzero(component_matrix[:,idx_slice,:]==component) >= self.min_area):
                 relevant_components.append(component)
-
         return relevant_components
 
-    def _get_relevant_slices(self, procedure, path_mask = None, path_segm = None, path_synthesis = None):
+    def _get_relevant_slices(self, procedure, path_t1n, path_mask = None, path_segm = None, path_synthesis = None):
         output = dict()
         output["path_mask"] = None
         output["path_segm"] = None
@@ -204,15 +180,14 @@ class DatasetMRI2D(DatasetMRI):
         output["list_relevant_components"] = None
 
         if procedure == "mask":
-            assert path_mask, "If procedure is mask, then path_mask is mandatory" 
-
-            t1n_mask = self._get_mask(path_mask, path_segm)
+            assert path_mask, "If procedure is mask, then path_mask is mandatory"  
+            t1n_mask = self._get_mask(path_mask, path_t1n, path_segm)
             if (t1n_mask is None):
-                return None, [], [] 
+                return None, [], []
 
             # extract connected components from mask or load them if they are already exist
             path_component_matrix = None
-            if self.only_connected_masks:
+            if self.only_connected_masks: 
                 path_component_matrix = os.path.splitext(path_mask)[0] + "_component_matrix.npy"  
                 component_matrix, _ = self._get_component_matrix(t1n_mask, path_component_matrix)
 
@@ -247,9 +222,13 @@ class DatasetMRI2D(DatasetMRI):
         
         elif procedure == "segmentation":
             assert path_segm, "If procedure is segmentation, then path_segm is mandatory"
+            # preprocess t1n, mask, segm and synthesis
+            t1n_img = nib.load(path_t1n) 
+            t1n_segm = nib.load(path_segm) 
+            _, _, _, t1n_segm, _ = self.preprocess(t1n_img, segm=t1n_segm)
 
-            # Restrict slices to white matter regions 
-            t1n_segm = self._get_white_matter_segm(path_segm)
+            # Restrict slices to white matter regions
+            t1n_segm = self._get_white_matter_segm(t1n_segm)
 
             # get first slice with white matter content  
             i=0

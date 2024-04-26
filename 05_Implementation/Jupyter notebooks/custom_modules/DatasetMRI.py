@@ -37,10 +37,17 @@ class DatasetMRI(Dataset):
 
     
 
-    def __init__(self, root_dir_img: Path, root_dir_segm: Path = None, root_dir_masks: Path = None, root_dir_synthesis: Path = None, directDL: bool = True, only_connected_masks: bool = False):
+    def __init__(
+            self, 
+            root_dir_img: Path, 
+            root_dir_segm: Path = None, 
+            root_dir_masks: Path = None, 
+            root_dir_synthesis: Path = None, 
+            img_target_shape = (256,256), 
+            only_connected_masks: bool = False):
+        
         #Initialize variables
-        self.root_dir_img = root_dir_img 
-        self.directDL = directDL
+        self.root_dir_img = root_dir_img  
         if(root_dir_masks):
             #make a list of lists containing all paths to masks
             self.list_paths_masks = list()
@@ -55,7 +62,7 @@ class DatasetMRI(Dataset):
         self.list_paths_t1n = list(root_dir_img.rglob("*.nii.gz"))
         self.idx_to_element = dict() 
         self.only_connected_masks = only_connected_masks
-        self.t1n_target_shape = (256,256)
+        self.img_target_shape = img_target_shape
 
         if(root_dir_segm and (len(self.list_paths_t1n) != len(self.list_paths_segm))):
             raise ValueError(f"The amount of T1n files and segm files must be the same. Got {len(self.list_paths_t1n)} and {len(self.list_paths_segm)}")        
@@ -94,7 +101,7 @@ class DatasetMRI(Dataset):
 
         return component_matrix, n
 
-    def _get_white_matter_segm(self, segm_path: str):
+    def _get_white_matter_segm(self, segm: torch.Tensor):
         """
         Restricts the slices to white matter regions.
 
@@ -104,21 +111,12 @@ class DatasetMRI(Dataset):
         Returns:
             binary_white_matter_segm (np.ndarray): Binary mask of the white matter regions
         """
-
-        t1n_segm = nib.load(segm_path)
-        t1n_segm = t1n_segm.get_fdata()
-
-        # transform segmentation if the segmentation came from Direct+DL
-        if self.directDL:
-            t1n_segm = np.transpose(t1n_segm)
-            t1n_segm = np.flip(t1n_segm, axis=1)
-        
         # restrict slices to white matter regions
-        binary_white_matter_segm = np.logical_or(t1n_segm==41, t1n_segm==2)
+        binary_white_matter_segm = np.logical_or(segm==41, segm==2)
 
         return binary_white_matter_segm
     
-    def _get_mask(self, path_mask, path_segm):
+    def _get_mask(self, path_mask, path_t1n, path_segm):
         """
         Loads the mask and restricts it to white matter regions if a segmentation is given.
 
@@ -131,11 +129,14 @@ class DatasetMRI(Dataset):
         """
 
         t1n_mask = nib.load(path_mask)
-        t1n_mask = t1n_mask.get_fdata()
+        t1n = nib.load(path_t1n)
+        t1n_segm = nib.load(path_segm) if path_segm else None
+        _, _, t1n_mask, t1n_segm, _ = self.preprocess(t1n = t1n, masks = t1n_mask, segm = t1n_segm)   
 
         # if there is a segmentation restrict mask to white matter regions
         if(self.list_paths_segm):
-            binary_white_matter_segm = self._get_white_matter_segm(path_segm) 
+            binary_white_matter_segm = self._get_white_matter_segm(t1n_segm)  
+
             t1n_mask = binary_white_matter_segm * t1n_mask
 
         if (not t1n_mask.any()):
@@ -144,7 +145,8 @@ class DatasetMRI(Dataset):
         
         return t1n_mask
 
-    def _padding(self, t1n: torch.tensor):
+    @staticmethod
+    def _padding(t1n: torch.tensor, pad_shape: Tuple[int, int, int]):
         """
         Pads the images to the pad_shape. 
 
@@ -156,10 +158,10 @@ class DatasetMRI(Dataset):
         """
 
         #pad to bounding box
-        d_max, w_max, h_max = DatasetMRI.self.unet_img_shape
+        d_max, w_max, h_max = pad_shape
         d, w, h = t1n.shape[-3], t1n.shape[-2], t1n.shape[-1] 
 
-        assert d <= d_max and w <= w_max and h <= h_max, f"The shape of the input image ({t1n.shape}) is bigger than pad_shape ({self.t1n_target_shape})"
+        assert d <= d_max and w <= w_max and h <= h_max, f"The shape of the input image ({t1n.shape}) is bigger than pad_shape ({pad_shape})"
 
         d_pad = max((d_max - d) / 2, 0)
         w_pad = max((w_max - w) / 2, 0)
@@ -172,7 +174,7 @@ class DatasetMRI(Dataset):
             int(floor(d_pad)),
             int(ceil(d_pad)),
         )
-        t1n = F.pad(t1n, padding, value=0, mode="constant") 
+        t1n = F.pad(t1n, padding, value=0) 
         return t1n
 
     @staticmethod
@@ -182,7 +184,7 @@ class DatasetMRI(Dataset):
         t1n_transform = nib.orientations.ornt_transform(orientation, orientation_ras)
         t1n_new = t1n.as_reoriented(t1n_transform)
 
-        inverse_orientation = nib.orientations.ornt_transform(orientation_ras, orientation) 
+        inverse_orientation = torch.tensor(nib.orientations.ornt_transform(orientation_ras, orientation))
 
         return t1n_new, inverse_orientation
     
@@ -212,87 +214,155 @@ class DatasetMRI(Dataset):
         return metadata
     
     @staticmethod
-    def postprocess(t1n: torch.Tensor, t1n_max_v: float, inverse_orientation: np.ndarray, t1n_shape_before_padding, metadata: dict):
+    def postprocess(t1n: torch.Tensor, t1n_max_v: torch.tensor, inverse_orientation: torch.tensor, shape_before_padding: torch.Size, shape_before_resize: torch.Size, shape_before_strip: torch.Size, metadata: dict):
         """
-        Transforms the images back to their original format.
-        Maps from [-1,1] to [0,1] and scales to original max value.
-    
+        Transforms the images back to their original format. 
+        Stripped zero slices can not be recovered.
+
         """
         #scale to original max value
         t1n = (t1n+1)/2 
         t1n *= t1n_max_v
 
         #remove padding
-        d, w, h = t1n.shape[-3], t1n.shape[-2], t1n.shape[-1]
-        d_new, w_new, h_new = t1n_shape_before_padding
+        d, h = t1n.shape[-3], t1n.shape[-1]
+        d_new, h_new = shape_before_padding[-3], shape_before_padding[-1]
         
-        d_unpad = max((d - d_new) / 2, 0)
-        w_unpad = max((w - w_new) / 2, 0)
+        d_unpad = max((d - d_new) / 2, 0) 
         h_unpad = max((h - h_new) / 2, 0)
 
         unpadding = (
             int(floor(d_unpad)),
-            int(-ceil(d_unpad)) if d_unpad != 0 else None, 
-            int(floor(w_unpad)),
-            int(-ceil(w_unpad)) if w_unpad != 0 else None,
+            int(-ceil(d_unpad)) if d_unpad != 0 else None,  
             int(floor(h_unpad)),
             int(-ceil(h_unpad)) if h_unpad != 0 else None,
         ) 
 
-        t1n = t1n[..., unpadding[0]:unpadding[1], unpadding[2]:unpadding[3], unpadding[4]:unpadding[5]] 
+        t1n = t1n[..., unpadding[0]:unpadding[1], :, unpadding[2]:unpadding[3]] 
         
         #resize to original shape 
-        t1n = torch.nn.functional.interpolate(t1n.unsqueeze(0).unsqueeze(0), size=tuple(t1n_shape_before_padding.squeeze().tolist()), mode='trilinear').squeeze()
+        t1n = torch.nn.functional.interpolate(t1n.unsqueeze(0).unsqueeze(0), size=tuple(shape_before_resize), mode='trilinear').squeeze()
+
+        # permutation to remain backwards compatible
+        t1n = t1n.permute(0, 2, 1)
 
         #reorient image to original orientation
         t1n = nib.nifti1.Nifti1Image(t1n.cpu().numpy(), **metadata) 
         t1n = t1n.as_reoriented(inverse_orientation.squeeze().cpu().numpy())
 
         return t1n
+    
+    @staticmethod
+    def strip(t1n, masks = None, segm = None, synthesis_mask = None): 
+        while t1n[:,:,0].abs().sum() == 0:
+            t1n = t1n[:,:,1:]
+            masks = masks[:,:,1:] if masks != None else None
+            segm = segm[:,:,1:] if segm != None else None
+            synthesis_mask = synthesis_mask[:,:,1:] if synthesis_mask != None else None
 
-    def preprocess(self, t1n: nib.nifti1.Nifti1Image):
-        """
-        Transforms the images to a more unified format.
-        Normalizes to -1,1. Pad and crop to bounding box.
-        
-        Args:
-            t1n (nib.nifti1.Nifti1Image): t1n file (ground truth)
+        while t1n[:,:,-1].abs().sum() == 0: 
+            t1n = t1n[:,:,:-1]
+            masks = masks[:,:,:-1] if masks != None else None
+            segm = segm[:,:,:-1] if segm != None else None
+            synthesis_mask = synthesis_mask[:,:,:-1] if synthesis_mask!= None else None
+            
+        while t1n[:,0,:].abs().sum() == 0:
+            t1n = t1n[:,1:,:]
+            masks = masks[:,1:,:] if masks != None else None
+            segm = segm[:,1:,:] if segm != None else None
+            synthesis_mask = synthesis_mask[:,1:,:] if synthesis_mask != None else None
 
-        Returns:
-            t1n: The padded and cropped version of t1n.
-            t1n_max_v: Maximal value of t1n image (used for normalization).
-            transform: used transformation to reorient the image to RAS
-        """    
+        while t1n[:,-1,:].abs().sum() == 0:
+            t1n = t1n[:,:-1,:]
+            masks = masks[:,:-1,:] if masks != None else None
+            segm = segm[:,:-1,:] if segm != None else None
+            synthesis_mask = synthesis_mask[:,:-1,:] if synthesis_mask != None else None
+            
+        while t1n[0,:,:].abs().sum() == 0:
+            t1n = t1n[1:,:,:]
+            masks = masks[1:,:,:] if masks != None else None
+            segm = segm[1:,:,:] if segm != None else None
+            synthesis_mask = synthesis_mask[1:,:,:] if synthesis_mask != None else None
 
-        # reorient image to RAS
-        t1n, inverse_orientation = DatasetMRI._reorient_to_ras(t1n) 
-        t1n = t1n.get_fdata()         
+        while t1n[-1,:,:].abs().sum() == 0:
+            t1n = t1n[:-1,:,:] 
+            masks = masks[:-1,:,:] if masks != None else None
+            segm = segm[:-1,:,:] if segm != None else None
+            synthesis_mask = synthesis_mask[:-1,:,:] if synthesis_mask != None else None
+        return t1n, masks, segm, synthesis_mask
+
+
+    def preprocess(
+            self, 
+            t1n: nib.nifti1.Nifti1Image, 
+            masks: nib.nifti1.Nifti1Image = None, 
+            segm: nib.nifti1.Nifti1Image = None, 
+            synthesis_mask: nib.nifti1.Nifti1Image = None): 
+        # reorient images to RAS 
+        t1n, inverse_orientation = DatasetMRI._reorient_to_ras(t1n)
+        t1n = t1n.get_fdata()
         t1n = torch.Tensor(t1n)
+        
+        # permutation to remain backwards compatible
+        t1n = t1n.permute(0, 2, 1)
 
-        # resize image if it is bigger than pad_shape   
+        if masks != None:
+            masks, _ = DatasetMRI._reorient_to_ras(masks)
+            masks = masks.get_fdata() 
+            # copy to avoid negative strides in numpy arrays
+            masks = torch.Tensor(masks.copy())
+            masks = masks.permute(0, 2, 1)
+        if segm != None:
+            segm, _ = DatasetMRI._reorient_to_ras(segm)
+            segm = segm.get_fdata()
+            segm = torch.Tensor(segm.copy())
+            segm = segm.permute(0, 2, 1)
+        if synthesis_mask != None:
+            synthesis_mask, _ = DatasetMRI._reorient_to_ras(synthesis_mask)
+            synthesis_mask = synthesis_mask.get_fdata()
+            synthesis_mask = torch.Tensor(synthesis_mask.copy()) 
+            synthesis_mask = synthesis_mask.permute(0, 2, 1)
+
+        # remove all zero slices from t1n
+        t1n[t1n<0] = 0 #Values below 0 are considered to be noise
+        shape_before_strip = t1n.shape
+        t1n, masks, segm, synthesis_mask = DatasetMRI.strip(t1n, masks, segm, synthesis_mask)
+
+        # resize image to the max, which fits inside target_shape
+        shape_before_resize=t1n.shape
         t1n = self.resize_image(t1n)
         
-        #pad the image to pad_shape
-        t1n_shape_before_padding = t1n.shape
-        t1n = self._padding(t1n)
+        #pad the image to target_shape
+        shape_before_padding = t1n.shape
+        pad_shape = (self.img_target_shape[0], t1n.shape[1], self.img_target_shape[1])
+        t1n = DatasetMRI._padding(t1n, pad_shape)
 
-        #Normalize the image to [-1,1] following the DDPM paper
+        #Normalize the image to [-1,1] following the DDPM paper 
         t1n[t1n<0] = 0 #Values below 0 are considered to be noise
         t1n_max_v = torch.max(t1n)
         t1n /= t1n_max_v # [0,1]
         t1n = (t1n*2) - 1
 
-        proc_info = (t1n_max_v, inverse_orientation, t1n_shape_before_padding)
+        #information needed for postprocessing
+        proc_info = (t1n_max_v, inverse_orientation, shape_before_padding, shape_before_resize, shape_before_strip)
 
-        return t1n, proc_info
+        if masks != None:
+            masks = self.resize_image(masks)
+            masks = DatasetMRI._padding(masks, pad_shape)
+        if segm != None:
+            segm = self.resize_image(segm)
+            segm = DatasetMRI._padding(segm, pad_shape)
+        if synthesis_mask != None:
+            synthesis_mask = self.resize_image(synthesis_mask)
+            synthesis_mask = DatasetMRI._padding(synthesis_mask, pad_shape)
+
+        return t1n, proc_info, masks, segm, synthesis_mask
 
     def resize_image(self, img):
-        img_shape = torch.tensor([img.shape[-3], img.shape[-2], img.shape[-1]])
-        shape_max = torch.tensor(self.t1n_target_shape)
-        diff = img_shape - shape_max
-        if diff.max() > 0: 
-            img_factor = shape_max[diff.argmax()] / img_shape[diff.argmax()]
-            img = torch.nn.functional.interpolate(img.unsqueeze(0).unsqueeze(0), scale_factor=img_factor.item()).squeeze()
+        img_shape = torch.tensor([img.shape[-3], img.shape[-1]])
+        shape_max = torch.tensor(self.img_target_shape)
+        factors = shape_max / img_shape
+        img = torch.nn.functional.interpolate(img.unsqueeze(0).unsqueeze(0), scale_factor=factors.min().item()).squeeze()
         return img
 
     @staticmethod
