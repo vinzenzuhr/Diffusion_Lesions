@@ -15,9 +15,8 @@ sys.path.insert(1, './custom_modules')
 from dataclasses import dataclass
 
 @dataclass
-class TrainingConfig:
-    image_size = 256  # TODO: the generated image resolution
-    image_shape = (256,256,160)
+class TrainingConfig: 
+    img_target_shape = (256,256)
     channels = 1 
     train_batch_size = 4
     eval_batch_size = 4
@@ -96,9 +95,9 @@ if config.brightness_augmentation:
     transformations = transforms.RandomApply([ScaleDecorator(transforms.ColorJitter(brightness=1))], p=0.5)
 
 #create dataset
-datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), root_dir_masks=Path(config.masks_train_path), only_connected_masks=config.train_only_connected_masks, transforms=transformations)
-datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks)
-dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks)
+datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), root_dir_masks=Path(config.masks_train_path), only_connected_masks=config.train_only_connected_masks, img_target_shape=config.img_target_shape, transforms=transformations)
+datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, img_target_shape=config.img_target_shape)
+dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, img_target_shape=config.img_target_shape)
 
 
 # ### Visualize dataset
@@ -119,7 +118,7 @@ for i, idx in enumerate(random_indices):
 fig.show()
 
 
-# In[7]:
+# In[ ]:
 
 
 # Plot: masks
@@ -132,14 +131,14 @@ fig.show()
 
 # ### Prepare Training
 
-# In[8]:
+# In[ ]:
 
 
 #create model
 from diffusers import UNet2DModel
 
 model = UNet2DModel(
-    sample_size=config.image_size,  # the target image resolution
+    sample_size=config.img_target_shape,  # the target image resolution
     in_channels=3, # the number of input channels: 1 for img, 1 for img_voided, 1 for mask
     out_channels=config.channels,  # the number of output channels
     layers_per_block=2,  # how many ResNet layers to use per UNet block
@@ -165,7 +164,7 @@ model = UNet2DModel(
 config.model = "UNet2DModel"
 
 
-# In[9]:
+# In[ ]:
 
 
 #setup noise scheduler
@@ -182,7 +181,7 @@ noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
 config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
 
 
-# In[10]:
+# In[ ]:
 
 
 # setup lr scheduler
@@ -199,7 +198,7 @@ lr_scheduler = get_cosine_schedule_with_warmup(
 config.lr_scheduler = "cosine_schedule_with_warmup"
 
 
-# In[11]:
+# In[ ]:
 
 
 from TrainingConditional import TrainingConditional
@@ -226,7 +225,7 @@ args = {
 trainingLesions = TrainingConditional(**args)
 
 
-# In[11]:
+# In[ ]:
 
 
 if config.mode == "train":

@@ -1,32 +1,32 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[2]:
 
 
 import sys
 sys.path.insert(1, './custom_modules')
 
 
-# In[2]:
+# In[3]:
 
 
 #### create config
 from dataclasses import dataclass
 
 @dataclass
-class TrainingConfig:
-    image_size = 256  # TODO: the generated image resolution
-    image_shape = (256,256,160)
+class TrainingConfig:  
+    img_target_shape = (256,256)
     channels = 1
     train_batch_size = 4 
     eval_batch_size = 4  
+    evaluate_num_batches = 2 # one batch needs ~130s 
+    num_samples_per_batch = 1
     num_epochs = 350
     gradient_accumulation_steps = 1
     learning_rate = 1e-4
     lr_warmup_steps = 500
     evaluate_epochs = 40 # anpassen auf Anzahl epochs
-    evaluate_num_batches = 2 # one batch needs ~130s 
     deactivate3Devaluation = True
     evaluate_3D_epochs = 1000  # one 3D evaluation has 77 slices and needs 166min
     save_model_epochs = 300
@@ -42,10 +42,11 @@ class TrainingConfig:
     eval_only_connected_masks=False 
     num_inference_steps=50 
     log_csv = False
-    mode = "train" # train / eval
-    debug = False
+    mode = "eval" # train / eval
+    debug = True
     jump_length=8
     jump_n_sample=10 
+    brightness_augmentation = True
     #uniform_dataset_path = "./uniform_dataset"
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub
@@ -56,7 +57,7 @@ class TrainingConfig:
 config = TrainingConfig()
 
 
-# In[3]:
+# In[4]:
 
 
 if config.debug:
@@ -73,7 +74,7 @@ if config.debug:
     config.jump_n_sample=1
 
 
-# In[4]:
+# In[5]:
 
 
 #setup huggingface accelerate
@@ -83,27 +84,34 @@ import accelerate
 accelerate.commands.config.default.write_basic_config(config.mixed_precision)
 
 
-# In[5]:
+# In[ ]:
 
 
 from DatasetMRI2D import DatasetMRI2D
 from DatasetMRI3D import DatasetMRI3D
 from pathlib import Path
+from torchvision import transforms
+from transform_utils import ScaleDecorator 
+
+#add augmentation
+transformations = None
+if config.brightness_augmentation:
+    transformations = transforms.RandomApply([ScaleDecorator(transforms.ColorJitter(brightness=1))], p=0.5)
 
 #create dataset
-datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), only_connected_masks=config.train_only_connected_masks)
-datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks)
-dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks)
+datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), only_connected_masks=config.train_only_connected_masks, img_target_shape=config.img_target_shape, transforms=transformations)
+datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, img_target_shape=config.img_target_shape)
+dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, img_target_shape=config.img_target_shape)
 
 
-# In[6]:
+# In[ ]:
 
 
 #create model
 from diffusers import UNet2DModel
 
 model = UNet2DModel(
-    sample_size=config.image_size,  # the target image resolution
+    sample_size=config.img_target_shape,  # the target image resolution
     in_channels=config.channels,  # the number of input channels, 3 for RGB images
     out_channels=config.channels,  # the number of output channels
     layers_per_block=2,  # how many ResNet layers to use per UNet block
@@ -129,7 +137,7 @@ model = UNet2DModel(
 config.model = "UNet2DModel"
 
 
-# In[7]:
+# In[ ]:
 
 
 #setup noise scheduler
@@ -142,7 +150,7 @@ noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
 config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
 
 
-# In[8]:
+# In[ ]:
 
 
 # setup lr scheduler
@@ -158,7 +166,7 @@ lr_scheduler = get_cosine_schedule_with_warmup(
 config.lr_scheduler = "cosine_schedule_with_warmup"
 
 
-# In[9]:
+# In[ ]:
 
 
 from TrainingUnconditional import TrainingUnconditional
@@ -179,7 +187,7 @@ args = {
     "datasetEvaluation": datasetEvaluation, 
     "dataset3DEvaluation": dataset3DEvaluation, 
     "evaluation2D": Evaluation2DFilling,
-    "evaluation3D": Evaluation3DFilling, 
+    "evaluation3D": Evaluation3DFilling,
     "pipelineFactory": PipelineFactories.get_repaint_pipeline,
     "deactivate3Devaluation": config.deactivate3Devaluation,
     "evaluation_pipeline_parameters": {
@@ -190,7 +198,7 @@ args = {
 trainingRepaint = TrainingUnconditional(**args)
 
 
-# In[10]:
+# In[ ]:
 
 
 if config.mode == "train": 
@@ -213,21 +221,3 @@ print("Finished Training")
 
 
 # In[ ]:
-
-
-#create python script for ubelix 
-import os
-
-get_ipython().system('jupyter nbconvert --to script "lesion_filling_unconditioned_repaint.ipynb"')
-filename="lesion_filling_unconditioned_repaint.py"
-
-# delete this cell from python file
-lines = []
-with open(filename, 'r') as fp:
-    lines = fp.readlines()
-with open(filename, 'w') as fp:
-    for number, line in enumerate(lines):
-        if number < len(lines)-17: 
-            fp.write(line)
-
-
