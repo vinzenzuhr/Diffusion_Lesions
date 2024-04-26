@@ -113,10 +113,11 @@ class Evaluation2D(ABC):
             for key, value in new_metrics.items(): 
                 metrics[key] += value
 
+            self.progress_bar.update(1)
+            
             if (self.config.evaluate_num_batches != -1) and (n_iter >= self.config.evaluate_num_batches-1):
                 break 
 
-            self.progress_bar.update(1)
 
 
 

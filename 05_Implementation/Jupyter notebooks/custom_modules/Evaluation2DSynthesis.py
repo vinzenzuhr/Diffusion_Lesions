@@ -9,14 +9,26 @@ class Evaluation2DSynthesis(Evaluation2D):
         super().__init__(config, pipeline, dataloader, tb_summary, accelerator, _get_training_input)
 
     def _add_coarse_lesions(self, clean_images, batch):
-        synthesis_masks = batch["synthesis"]    
+        synthesis_masks = batch["synthesis"] 
+        masks = batch["mask"].to(torch.bool)
         if self.config.add_lesion_technique == "mean_intensity":
             lesion_intensity = -0.5492 
-        elif self.config.add_lesion_technique == "other_lesions":
-            # use first quartile of lesion intensity as new lesion intensity
-            masks = batch["mask"]
-            lesion_intensity = clean_images[masks.to(torch.bool)].quantile(0.25)
+        elif self.config.add_lesion_technique == "other_lesions_1stQuantile":
+            # use first quantile of lesion intensity as new lesion intensity
+            lesion_intensity = clean_images[masks].quantile(0.25)
+            print("1st quantile lesion intensity: ", lesion_intensity)
+        elif self.config.add_lesion_technique == "other_lesions_mean":
+            # use mean of lesion intensity as new lesion intensity
+            lesion_intensity = clean_images[masks].mean()
             print("mean lesion intensity: ", lesion_intensity)
+        elif self.config.add_lesion_technique == "other_lesions_median":
+            # use mean of lesion intensity as new lesion intensity
+            lesion_intensity = clean_images[masks].median()
+            print("median lesion intensity: ", lesion_intensity)
+        elif self.config.add_lesion_technique == "other_lesions_3rdQuantile":
+            # use 3rd quantile of lesion intensity as new lesion intensity
+            lesion_intensity = clean_images[masks].quantile(0.75)
+            print("3rd quantile lesion intensity: ", lesion_intensity)
         else:
             raise ValueError("config.add_lesion_technique must be either 'mean_intensity' or 'other_lesions'")
         images_with_lesions = clean_images.clone()

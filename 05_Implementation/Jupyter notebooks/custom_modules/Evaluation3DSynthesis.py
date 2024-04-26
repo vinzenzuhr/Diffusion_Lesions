@@ -10,14 +10,25 @@ class Evaluation3DSynthesis(Evaluation3D):
     def _start_pipeline(self, batch, sample_idx, parameters={}):
         clean_images = batch["gt_image"][sample_idx] #torch.Size([1, 256, 256, 256])
         synthesis_masks = batch["synthesis"][sample_idx]  #torch.Size([1, 256, 256, 256])
-
+        masks = batch["mask"][sample_idx]  #torch.Size([1, 256, 256, 256])
         if self.config.add_lesion_technique == "mean_intensity":
-            lesion_intensity = -0.5492
-        elif self.config.add_lesion_technique == "other_lesions":
-            # use first quartile of lesion intensity as new lesion intensity
-            masks = batch["mask"][sample_idx]  #torch.Size([1, 256, 256, 256])
-            lesion_intensity = clean_images[masks.to(torch.bool)].quantile(0.25)
+            lesion_intensity = -0.5492 
+        elif self.config.add_lesion_technique == "other_lesions_1stQuantile":
+            # use first quantile of lesion intensity as new lesion intensity
+            lesion_intensity = clean_images[masks].quantile(0.25)
+            print("1st quantile lesion intensity: ", lesion_intensity)
+        elif self.config.add_lesion_technique == "other_lesions_mean":
+            # use mean of lesion intensity as new lesion intensity
+            lesion_intensity = clean_images[masks].mean()
             print("mean lesion intensity: ", lesion_intensity)
+        elif self.config.add_lesion_technique == "other_lesions_median":
+            # use mean of lesion intensity as new lesion intensity
+            lesion_intensity = clean_images[masks].median()
+            print("median lesion intensity: ", lesion_intensity)
+        elif self.config.add_lesion_technique == "other_lesions_3rdQuantile":
+            # use 3rd quantile of lesion intensity as new lesion intensity
+            lesion_intensity = clean_images[masks].quantile(0.75)
+            print("3rd quantile lesion intensity: ", lesion_intensity)
         else:
             raise ValueError("config.add_lesion_technique must be either 'mean_intensity' or 'other_lesions'")
 
