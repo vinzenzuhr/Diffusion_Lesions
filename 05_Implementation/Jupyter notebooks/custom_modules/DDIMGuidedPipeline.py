@@ -51,7 +51,7 @@ class DDIMGuidedPipeline(DiffusionPipeline):
             guiding_imgs ('torch.tensor'): 
                 Images which are used as guides.
             timestep (`int`):
-                The timestep to start the diffusion from. Must be between 0 and `num_inference_steps` - 1. 
+                The timestep to start the diffusion from. Must be between 1 and `num_inference_steps`. 
             generator (`torch.Generator`, *optional*):
                 A [`torch.Generator`](https://pytorch.org/docs/stable/generated/torch.Generator.html) to make
                 generation deterministic.
@@ -104,7 +104,7 @@ class DDIMGuidedPipeline(DiffusionPipeline):
 
         # create noisy images at given timestep
         reverse_timestep = num_inference_steps - timestep
-        DDPM_timestep = self.scheduler.timesteps[reverse_timestep] 
+        DDPM_timestep = self.scheduler.timesteps[reverse_timestep]
         image = self.scheduler.add_noise(guiding_imgs, noise, DDPM_timestep)    
         for t in self.scheduler.timesteps[reverse_timestep:]: 
             # 1. predict noise model_output
