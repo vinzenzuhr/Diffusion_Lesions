@@ -5,12 +5,12 @@ import matplotlib.pyplot as plt
 
 class Evaluation2DSynthesis(Evaluation2D):
     def __init__(self, config, pipeline, dataloader, tb_summary, accelerator, _get_training_input):
-        assert type(pipeline).__name__ == "DDIMGuidedPipeline", "Pipeline must be of type DDIMGuidedPipeline"
+        assert type(pipeline).__name__ == "GuidedRePaintPipeline" or type(pipeline).__name__ == "DDIMGuidedPipeline" , "Pipeline must be of type DDIMGuidedPipeline or GuidedRePaintPipeline"
         super().__init__(config, pipeline, dataloader, tb_summary, accelerator, _get_training_input)
 
     def _add_coarse_lesions(self, clean_images, batch):
         synthesis_masks = batch["synthesis"] 
-        masks = batch["mask"].to(torch.bool)
+        masks = batch["mask"].to(torch.bool) 
         if self.config.add_lesion_technique == "mean_intensity":
             lesion_intensity = -0.5492 
         elif self.config.add_lesion_technique == "other_lesions_1stQuantile":
@@ -44,12 +44,10 @@ class Evaluation2DSynthesis(Evaluation2D):
         images = (images+1)/2
         masked_images = (masked_images+1)/2
         clean_images = (clean_images+1)/2
-        images_with_lesions = (images_with_lesions+1)/2
-        # change binary image from 0,1 to 0,255
-        synthesis_masks = synthesis_masks*255 
+        images_with_lesions = (images_with_lesions+1)/2 
 
         list = [images, masked_images, clean_images, synthesis_masks, images_with_lesions]
-        title_list = ["images", "masked_images", "clean_images", "masks", "images_with_lesions"] 
+        title_list = ["images", "masked_images", "clean_images", "synthesis_masks", "images_with_lesions"] 
         return list, title_list
 
     def _start_pipeline(self, batch, parameters={}):
@@ -61,6 +59,7 @@ class Evaluation2DSynthesis(Evaluation2D):
         #run it through network        
         synthesized_images = self.pipeline(
             images_with_lesions,
+            synthesis_masks,
             timestep=self.config.intermediate_timestep,
             generator=torch.Generator().manual_seed(self.config.seed), 
             num_inference_steps = self.config.num_inference_steps,
