@@ -106,7 +106,7 @@ def collate(batch, *, collate_fn_map: Optional[Dict[Union[Type, Tuple[Type, ...]
 def collate_multi_sample(batch):
     return collate(batch, collate_fn_map=default_collate_fn_map, multi_sample=True)
 
-def get_dataloader(dataset, batch_size, num_workers=4, random_sampler=False, seed=0, multi_sample = False): 
+def get_dataloader(dataset, batch_size, num_workers=8, random_sampler=False, seed=0, multi_sample = False): 
     #def _reset_seed(worker_id=0): 
     #    np.random.seed(0)
     #    torch.manual_seed(0)
@@ -120,8 +120,8 @@ def get_dataloader(dataset, batch_size, num_workers=4, random_sampler=False, see
         dataset, 
         batch_size=batch_size, 
         num_workers=num_workers, 
-        sampler=sampler, 
-        #worker_init_fn=None if random_sampler else _reset_seed, 
+        sampler=sampler,
+        pin_memory=True, 
         collate_fn=collate_multi_sample if multi_sample else default_collate)
      
     
