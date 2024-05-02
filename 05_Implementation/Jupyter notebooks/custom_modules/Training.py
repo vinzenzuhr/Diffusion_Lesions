@@ -73,16 +73,16 @@ class Training(ABC):
     
     def _get_random_masks(self, n, generator=None):
         #create circular mask with random center around the center point of the pictures and a radius between 3 and 50 pixels
-        center=torch.normal(mean=self.config.image_size/2, std=30, size=(n,2), generator=generator) # 30 is chosen by inspection
+        center=torch.normal(mean=torch.tensor(self.config.unet_img_shape, device=self.accelerator.device).expand(n,2)/2, std=30.0, generator=generator) # 30 is chosen by inspection
         low=3
         high=50
-        radius=torch.rand(n, generator=generator)*(high-low)+low # get radius between 3 and 50 from uniform distribution 
+        radius=torch.rand(n, generator=generator, device=self.accelerator.device)*(high-low)+low # get radius between 3 and 50 from uniform distribution 
 
         #Test case
         #center=torch.tensor([[0,255],[0,255]]) 
         #radius=torch.tensor([2,2])
         
-        Y, X = [torch.arange(self.config.image_size)[:,None],torch.arange(self.config.image_size)[None,:]] # gives two vectors, each containing the pixel locations. There's a column vector for the column indices and a row vector for the row indices.
+        Y, X = [torch.arange(self.config.unet_img_shape[0], device=self.accelerator.device)[:,None],torch.arange(self.config.unet_img_shape[1], device=self.accelerator.device)[None,:]] # gives two vectors, each containing the pixel locations. There's a column vector for the column indices and a row vector for the row indices.
         dist_from_center = torch.sqrt((X.T - center[:,0])[None,:,:]**2 + (Y-center[:,1])[:,None,:]**2) # creates matrix with euclidean distance to center
         dist_from_center = dist_from_center.permute(2,0,1) 
 
@@ -125,17 +125,18 @@ class Training(ABC):
             "dataset_eval_path"] 
 
         for scalar in scalars:
-            if hasattr(self.config, scalar):
+            if hasattr(self.config, scalar) and getattr(self.config, scalar) is not None:
                 self.tb_summary.add_scalar(scalar, getattr(self.config, scalar), 0)
         for text in texts:
-            if hasattr(self.config, text):
+            if hasattr(self.config, text) and getattr(self.config, text) is not None:
                 self.tb_summary.add_text(text, getattr(self.config, text), 0)
-            
+        
         self.tb_summary.add_scalar("len(train_dataloader)", len(self.train_dataloader), 0)
         self.tb_summary.add_scalar("len(d2_eval_dataloader)", len(self.d2_eval_dataloader), 0)
         self.tb_summary.add_scalar("len(d3_eval_dataloader)", len(self.d3_eval_dataloader), 0) 
-        self.tb_summary.add_scalar("img_target_shape_x", self.config.img_target_shape[0], 0) 
-        self.tb_summary.add_scalar("img_target_shape_y", self.config.img_target_shape[1], 0) 
+        if self.config.t1n_target_shape:
+            self.tb_summary.add_scalar("t1n_target_shape_x", self.config.t1n_target_shape[0], 0) 
+            self.tb_summary.add_scalar("t1n_target_shape_y", self.config.t1n_target_shape[1], 0) 
 
         if self.config.log_csv:
             with open(os.path.join(self.config.output_dir, "metrics.csv"), "w") as f:
