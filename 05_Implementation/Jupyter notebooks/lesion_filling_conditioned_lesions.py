@@ -16,18 +16,20 @@ from dataclasses import dataclass
 
 @dataclass
 class TrainingConfig: 
-    img_target_shape = (256,256)
+    t1n_target_shape = None # will transform t1n during preprocessing (computationally expensive)
+    unet_img_shape = (256,256)
     channels = 1 
     train_batch_size = 4
     eval_batch_size = 4
     num_samples_per_batch = 1
-    num_epochs = 80 # one epoch needs ~12min (x2 GPU), because their are more training samples due connected_components
+    num_epochs = 17 # one epoch needs ~12min (x2 GPU), because their are more training samples due connected_components
     gradient_accumulation_steps = 1
     learning_rate = 1e-4
     lr_warmup_steps = 100 #500
-    evaluate_epochs = 5
+    evaluate_epochs = 2
     deactivate3Devaluation = True
-    evaluate_num_batches = -1 # one batch needs ~15s.  
+    evaluate_num_batches = 30 # one batch needs ~15s.  
+    evaluate_num_batches_3d = -1 
     evaluate_3D_epochs = 1000  # one 3D evaluation needs ~20min
     save_model_epochs = 60
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
@@ -64,9 +66,9 @@ if config.debug:
     config.train_only_connected_masks=False
     config.eval_only_connected_masks=False
     config.evaluate_num_batches=1
-    dataset_train_path = "./dataset_eval/imgs"
-    segm_train_path = "./dataset_eval/segm"
-    masks_train_path = "./dataset_eval/masks" 
+    config.dataset_train_path = "./datasets/filling/dataset_eval/imgs"
+    config.segm_train_path = "./datasets/filling/dataset_eval/segm"
+    config.masks_train_path = "./datasets/filling/dataset_eval/masks"
 
 
 # In[4]:
@@ -95,9 +97,9 @@ if config.brightness_augmentation:
     transformations = transforms.RandomApply([ScaleDecorator(transforms.ColorJitter(brightness=1))], p=0.5)
 
 #create dataset
-datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), root_dir_masks=Path(config.masks_train_path), only_connected_masks=config.train_only_connected_masks, img_target_shape=config.img_target_shape, transforms=transformations)
-datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, img_target_shape=config.img_target_shape)
-dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, img_target_shape=config.img_target_shape)
+datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), root_dir_masks=Path(config.masks_train_path), only_connected_masks=config.train_only_connected_masks, t1n_target_shape=config.t1n_target_shape, transforms=transformations)
+datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape)
+dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape)
 
 
 # ### Visualize dataset
@@ -118,7 +120,7 @@ for i, idx in enumerate(random_indices):
 fig.show()
 
 
-# In[ ]:
+# In[7]:
 
 
 # Plot: masks
@@ -131,14 +133,14 @@ fig.show()
 
 # ### Prepare Training
 
-# In[ ]:
+# In[8]:
 
 
 #create model
 from diffusers import UNet2DModel
 
 model = UNet2DModel(
-    sample_size=config.img_target_shape,  # the target image resolution
+    sample_size=config.unet_img_shape,  # the target image resolution
     in_channels=3, # the number of input channels: 1 for img, 1 for img_voided, 1 for mask
     out_channels=config.channels,  # the number of output channels
     layers_per_block=2,  # how many ResNet layers to use per UNet block
@@ -164,7 +166,7 @@ model = UNet2DModel(
 config.model = "UNet2DModel"
 
 
-# In[ ]:
+# In[9]:
 
 
 #setup noise scheduler
@@ -181,7 +183,7 @@ noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
 config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
 
 
-# In[ ]:
+# In[10]:
 
 
 # setup lr scheduler
@@ -198,7 +200,7 @@ lr_scheduler = get_cosine_schedule_with_warmup(
 config.lr_scheduler = "cosine_schedule_with_warmup"
 
 
-# In[ ]:
+# In[11]:
 
 
 from TrainingConditional import TrainingConditional

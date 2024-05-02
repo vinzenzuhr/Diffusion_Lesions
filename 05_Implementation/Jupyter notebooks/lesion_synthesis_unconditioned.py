@@ -15,17 +15,20 @@ sys.path.insert(1, './custom_modules')
 from dataclasses import dataclass
 
 @dataclass
-class TrainingConfig:
-    image_size = 256
+class TrainingConfig: 
+    t1n_target_shape = None # will transform t1n during preprocessing (computationally expensive)
+    unet_img_shape = (128,256)
     channels = 1
     train_batch_size = 4 
     eval_batch_size = 4  
+    num_samples_per_batch = 1
     num_epochs = 170
     gradient_accumulation_steps = 1
     learning_rate = 1e-4
     lr_warmup_steps = 500
     evaluate_epochs = 5 # adjust to num_epochs
     evaluate_num_batches = -1 # ~3s/batch. 2.5 min/Evaluation 3D epoch with all batchesr
+    evaluate_num_batches_3d = -1 
     deactivate3Devaluation = False
     evaluate_3D_epochs = 1000  # 3 min/Evaluation 3D
     save_model_epochs = 100
@@ -41,10 +44,11 @@ class TrainingConfig:
     eval_only_connected_masks=False 
     num_inference_steps=50
     log_csv = True
-    add_lesion_technique = "mean_intensity" # 'mean_intensity' or 'other_lesions'
+    add_lesion_technique = "other_lesions_median" # 'mean_intensity', 'other_lesions_1stQuantile', 'other_lesions_mean', 'other_lesions_median', or 'other_lesions_3rdQuantile',
     intermediate_timestep = 3 # starting from this timesteps. num_inference_steps means the whole pipeline and 1 the last step. 
-    mode = "tuning_timestep" # 'train', 'eval' or "tuning_timestep"
-    debug = False 
+    mode = "train" # 'train', 'eval' or "tuning_timestep"
+    debug = True 
+    brightness_augmentation = False
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub 
     seed = 0
@@ -63,9 +67,9 @@ if config.debug:
     config.eval_only_connected_masks=False
     config.evaluate_num_batches = 3
     config.deactivate3Devaluation = False
-    #dataset_train_path = "./dataset_eval/imgs"
-    #segm_train_path = "./dataset_eval/segm"
-    #masks_train_path = "./dataset_eval/masks"   
+    config.dataset_train_path = "./datasets/synthesis/dataset_eval/imgs"
+    config.segm_train_path = "./datasets/synthesis/dataset_eval/segm"
+    config.masks_train_path = "./datasets/synthesis/dataset_eval/masks" 
 
 
 # In[4]:
@@ -84,11 +88,18 @@ accelerate.commands.config.default.write_basic_config(config.mixed_precision)
 from DatasetMRI2D import DatasetMRI2D
 from DatasetMRI3D import DatasetMRI3D
 from pathlib import Path
+from torchvision import transforms
+from transform_utils import ScaleDecorator 
+
+#add augmentation
+transformations = None
+if config.brightness_augmentation:
+    transformations = transforms.RandomApply([ScaleDecorator(transforms.ColorJitter(brightness=1))], p=0.5)
 
 #create dataset
-datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), only_connected_masks=config.train_only_connected_masks, directDL=False)
-datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_segm=Path(config.segm_eval_path), root_dir_masks=Path(config.masks_eval_path), root_dir_synthesis=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, directDL=False)
-dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_segm=Path(config.segm_eval_path), root_dir_masks=Path(config.masks_eval_path), root_dir_synthesis=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, directDL=False)
+datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), only_connected_masks=config.train_only_connected_masks, t1n_target_shape=config.t1n_target_shape, transforms=transformations)
+datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), root_dir_synthesis=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape)
+dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), root_dir_synthesis=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape)
 
 
 # ### Finding good intensity of lesions
@@ -133,33 +144,87 @@ if False:
 import matplotlib.pyplot as plt 
 import random 
  
-torch.manual_seed(7) 
-random_idx = torch.randint(len(datasetEvaluation)-1, size=(1,)).item()
 
-fig, axis = plt.subplots(1,4, figsize=(16,4)) 
-img = datasetEvaluation[random_idx]["gt_image"].squeeze()
-img[datasetEvaluation[random_idx]["mask"].to(torch.bool).squeeze()] = -0.5492 # mean-std of lesion intensity
-axis[0].imshow(datasetEvaluation[random_idx]["gt_image"].squeeze()/2+0.5)
-axis[0].set_axis_off()
-axis[1].imshow(datasetEvaluation[random_idx]["mask"].squeeze())
-axis[1].set_axis_off()
-axis[2].imshow(img/2+0.5)
-axis[2].set_axis_off()
-axis[3].imshow(datasetEvaluation[random_idx]["synthesis"].squeeze())
-axis[3].set_axis_off()
-fig.show()
+#skip to speed up
+if False: 
+    random_idx = torch.randint(len(datasetEvaluation)-1, size=(1,)).item()
+    
+    fig, axis = plt.subplots(1,4, figsize=(16,4)) 
+    img = datasetEvaluation[random_idx]["gt_image"].squeeze()
+    img[datasetEvaluation[random_idx]["mask"].to(torch.bool).squeeze()] = -0.5492 # mean-std of lesion intensity
+    axis[0].imshow(datasetEvaluation[random_idx]["gt_image"].squeeze()/2+0.5)
+    axis[0].set_axis_off()
+    axis[1].imshow(datasetEvaluation[random_idx]["mask"].squeeze())
+    axis[1].set_axis_off()
+    axis[2].imshow(img/2+0.5)
+    axis[2].set_axis_off()
+    axis[3].imshow(datasetEvaluation[random_idx]["synthesis"].squeeze())
+    axis[3].set_axis_off()
+    fig.show()
+
+
+# ### Playground LPIPS
+
+# In[8]:
+
+
+#skip to speed up
+if False:
+    from Evaluation2DSynthesis import Evaluation2DSynthesis
+    from accelerate import Accelerator
+    from DDIMGuidedPipeline import DDIMGuidedPipeline
+    
+    pipeline = DDIMGuidedPipeline.from_pretrained(config.output_dir) 
+    
+    eval = Evaluation2DSynthesis(config, pipeline, None, None, Accelerator(), None)
+    images_with_lesions, _ = eval._add_coarse_lesions(datasetEvaluation[123]["gt_image"], datasetEvaluation[123])
+    clean_image=datasetEvaluation[123]["gt_image"]
+    synthesized_images = pipeline(images_with_lesions, 1).images
+    synthesized_images_2 = pipeline(images_with_lesions, 3).images
+    print("Pips for one timestep: ", eval._calc_lpip(clean_image.unsqueeze(0), synthesized_images))
+    print("Pips for three timestep: ", eval._calc_lpip(clean_image.unsqueeze(0), synthesized_images_2))
+
+
+# In[9]:
+
+
+#skip to speed up
+if False:
+    fig, axis = plt.subplots(1,4, figsize=(24,12))
+    axis[0].imshow(clean_image.squeeze()/2+0.5)
+    axis[0].set_title("original image")
+    axis[1].imshow(images_with_lesions.squeeze()/2+0.5)
+    axis[1].set_title("coarse lesions")
+    axis[2].imshow(synthesized_images.squeeze()/2+0.5)
+    axis[2].set_title("Diffusion with one timestep")
+    axis[3].imshow(synthesized_images_2.squeeze()/2+0.5)
+    axis[3].set_title("Diffusion with three timestep")
+
+
+# In[10]:
+
+
+#skip to speed up
+if False:
+    diff_1=clean_image-synthesized_images
+    diff_3=clean_image-synthesized_images_2
+    fig, axis = plt.subplots(1,2, figsize=(16,8))
+    axis[0].imshow(diff_1.squeeze()/2+0.5)
+    axis[0].set_title("Differences with one timestep")
+    axis[1].imshow(diff_3.squeeze()/2+0.5)
+    axis[1].set_title("Differences with three timestep")
 
 
 # ### Training
 
-# In[8]:
+# In[11]:
 
 
 #create model
 from diffusers import UNet2DModel
 
 model = UNet2DModel(
-    sample_size=config.image_size,  # the target image resolution
+    sample_size=config.unet_img_shape,  # the target image resolution
     in_channels=config.channels,  # the number of input channels, 3 for RGB images
     out_channels=config.channels,  # the number of output channels
     layers_per_block=2,  # how many ResNet layers to use per UNet block
@@ -185,7 +250,7 @@ model = UNet2DModel(
 config.model = "UNet2DModel"
 
 
-# In[9]:
+# In[12]:
 
 
 #setup noise scheduler
@@ -198,7 +263,7 @@ noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
 config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
 
 
-# In[10]:
+# In[13]:
 
 
 # setup lr scheduler
@@ -214,11 +279,11 @@ lr_scheduler = get_cosine_schedule_with_warmup(
 config.lr_scheduler = "cosine_schedule_with_warmup"
 
 
-# In[11]:
+# In[ ]:
 
 
 from TrainingUnconditional import TrainingUnconditional
-from DDIMGuidedPipeline import DDIMGuidedPipeline
+from GuidedRePaintPipeline import GuidedRePaintPipeline
 from Evaluation2DSynthesis import Evaluation2DSynthesis
 from Evaluation3DSynthesis import Evaluation3DSynthesis 
 import PipelineFactories
@@ -236,12 +301,12 @@ args = {
     "dataset3DEvaluation": dataset3DEvaluation, 
     "evaluation2D": Evaluation2DSynthesis,
     "evaluation3D": Evaluation3DSynthesis, 
-    "pipelineFactory": PipelineFactories.get_ddim_guided_pipeline, 
+    "pipelineFactory": PipelineFactories.get_guided_repaint_pipeline, 
     "deactivate3Devaluation": config.deactivate3Devaluation} 
-trainingSynthesis = TrainingUnconditional(**args) 
+trainingSynthesis = TrainingUnconditional(**args)
 
 
-# In[12]:
+# In[ ]:
 
 
 if config.mode == "train":
@@ -252,7 +317,7 @@ if config.mode == "train":
 
 
 if config.mode == "eval":
-    pipeline = DDIMGuidedPipeline.from_pretrained(config.output_dir) 
+    pipeline = GuidedRePaintPipeline.from_pretrained(config.output_dir) 
     trainingSynthesis.evaluate(pipeline)
 
 
@@ -260,31 +325,40 @@ if config.mode == "eval":
 
 
 import os
+import csv
 
 if config.mode == "tuning_timestep":
-    pipeline = DDIMGuidedPipeline.from_pretrained(config.output_dir)
+    pipeline = GuidedRePaintPipeline.from_pretrained(config.output_dir)
     original_output_dir = config.output_dir 
     timesteps = [1, 2, 3, 4, 5, 7, 9, 12, 15, 20]
     for t in timesteps:
-        config.intermediate_timestep = t
-        config.output_dir = original_output_dir + "_" + str(t)
-        trainingSynthesis.config = config
+        print("Begin evaluation for timestep ", t)
+        trainingSynthesis.config.intermediate_timestep = t
+        trainingSynthesis.config.output_dir = original_output_dir + "/tuning_timestep/timestep_" + str(t)
         if trainingSynthesis.accelerator.is_main_process:
             os.makedirs(config.output_dir, exist_ok=True)
             trainingSynthesis.log_meta_logs()
         trainingSynthesis.evaluate(pipeline) 
 
+    # plot lpips score vs timesteps
+    original_output_dir = config.output_dir
+    folder_list = list(Path().glob("lesion-synthesis-256-unconditioned_*"))
+    lpips_timesteps = []
+    for folder in folder_list:
+        timestep = str(folder).split("_")[-1] 
+        with open(folder / "metrics.csv", 'r') as fp: 
+            _ = fp.readline()
+            csv_metrics = fp.readline()  
+            reader = csv_metrics.split(',')
+            lpips = None 
+            for metric in reader:  
+                name, value = metric.split(':')
+                if name == "lpips":
+                    lpips_timesteps.append((int(timestep), float(value))) 
+    plt.cfg()
+    for timestep, lpips in lpips_timesteps: 
+        plt.scatter(timestep, lpips)
+    plt.savefig(config.output_dir + '/lpips_timesteps.png')
+
 
 # In[ ]:
-
-
-print("Finished Training")
-
-
-# In[ ]:
-
-
-#create python script for ubelix 
-import os
-
-get_ipython().system('jupyter nbconvert --to script "lesion_synthesis_unconditioned.ipynb"')

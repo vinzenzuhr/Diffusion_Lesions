@@ -15,22 +15,23 @@ sys.path.insert(1, './custom_modules')
 from dataclasses import dataclass
 
 @dataclass
-class TrainingConfig:
-    image_size = 256  # TODO: the generated image resolution
-    image_shape = (256,256,160)
+class TrainingConfig: 
+    t1n_target_shape = None # will transform t1n during preprocessing (computationally expensive)
+    unet_img_shape = (256,256)
     channels = 1
     train_batch_size = 1 
     eval_batch_size = 1 
-    num_samples_per_batch = 3
-    num_epochs = 70 # 4.5s/iter, 17 min/epoch
+    num_sorted_samples = 3
+    num_epochs = 50 # 4.5s/iter, 21 min/epoch
     gradient_accumulation_steps = 1
     learning_rate = 1e-4
     lr_warmup_steps = 500
-    evaluate_epochs = 9 # anpassen auf Anzahl epochs
-    evaluate_num_batches = 2 # one batch needs 4 min
+    evaluate_epochs = 8 # anpassen auf Anzahl epochs
+    evaluate_num_batches = 2 # one batch needs 4 min 
+    evaluate_num_batches_3d = -1 
     deactivate3Devaluation = True
     evaluate_3D_epochs = 1000  # one 3D evaluation has 77 slices and needs 166min
-    save_model_epochs = 300
+    save_model_epochs = 40
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
     output_dir = "lesion-filling-3D-repaint"  # the model name locally and on the HF Hub
     dataset_train_path = "./datasets/filling/dataset_train/imgs"
@@ -44,9 +45,10 @@ class TrainingConfig:
     num_inference_steps=50 
     log_csv = False
     mode = "train" # train / eval
-    debug = False
+    debug = True
     jump_length=8
     jump_n_sample=10 
+    brightness_augmentation = True
     #uniform_dataset_path = "./uniform_dataset"
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub
@@ -67,10 +69,10 @@ if config.debug:
     config.train_only_connected_masks=False
     config.eval_only_connected_masks=False
     config.evaluate_num_batches=1
-    dataset_train_path = "./dataset_eval/imgs"
-    segm_train_path = "./dataset_eval/segm"
-    masks_train_path = "./dataset_eval/masks"  
-    config.num_samples_per_batch=4
+    config.dataset_train_path = "./datasets/filling/dataset_eval/imgs"
+    config.segm_train_path = "./datasets/filling/dataset_eval/segm"
+    config.masks_train_path = "./datasets/filling/dataset_eval/masks"  
+    config.num_sorted_samples=1
 
 
 # In[4]:
@@ -89,11 +91,18 @@ accelerate.commands.config.default.write_basic_config(config.mixed_precision)
 from DatasetMRI2D import DatasetMRI2D
 from DatasetMRI3D import DatasetMRI3D
 from pathlib import Path
+from torchvision import transforms
+from transform_utils import ScaleDecorator 
+
+#add augmentation
+transformations = None
+if config.brightness_augmentation:
+    transformations = transforms.RandomApply([ScaleDecorator(transforms.ColorJitter(brightness=1))], p=0.5)
 
 #create dataset
-datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), only_connected_masks=config.train_only_connected_masks, num_samples=config.num_samples_per_batch)
-datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, num_samples=config.num_samples_per_batch)
-dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks)
+datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), only_connected_masks=config.train_only_connected_masks, t1n_target_shape =config.t1n_target_shape, num_sorted_samples=config.num_sorted_samples, transforms=transformations, random_sorted_samples=True)
+datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape =config.t1n_target_shape, num_sorted_samples=config.num_sorted_samples)
+dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape =config.t1n_target_shape)
 
 
 # In[6]:
@@ -103,7 +112,7 @@ dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), 
 from pseudo3D import UNet2DModel
 
 model = UNet2DModel(
-    sample_size=config.image_size,  # the target image resolution
+    sample_size=config.unet_img_shape,  # the target image resolution
     in_channels=config.channels,  # the number of input channels, 3 for RGB images
     out_channels=config.channels,  # the number of output channels
     layers_per_block=2,  # how many ResNet layers to use per UNet block
@@ -181,7 +190,7 @@ args = {
     "evaluation2D": Evaluation2DFilling,
     "evaluation3D": Evaluation3DFilling, 
     "pipelineFactory": PipelineFactories.get_repaint_pipeline,
-    "multi_sample": config.num_samples_per_batch > 1,
+    "multi_sample": config.num_sorted_samples > 1,
     "deactivate3Devaluation": config.deactivate3Devaluation,
     "evaluation_pipeline_parameters": {
                 "jump_length": config.jump_length,
@@ -213,4 +222,4 @@ if config.mode == "eval":
 print("Finished Training")
 
 
-# In[11]:
+# In[ ]:
