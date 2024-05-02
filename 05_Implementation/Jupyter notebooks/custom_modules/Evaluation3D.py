@@ -25,11 +25,12 @@ class Evaluation3D(ABC):
     
     def evaluate(self, global_step, parameters={}):
         #initialize metrics 
-        metrics = dict()
-        metric_list = ["ssim_full", "ssim_out", "ssim_in", "mse_full", "mse_out", "mse_in", "psnr_full", "psnr_out", "psnr_in"] 
-        for metric in metric_list:
-            metrics[metric] = 0
-        num_iterations = 0
+        if self.accelerator.is_local_main_process:
+            metrics = dict()
+            metric_list = ["ssim_full", "ssim_out", "ssim_in", "mse_full", "mse_out", "mse_in", "psnr_full", "psnr_out", "psnr_in"] 
+            for metric in metric_list:
+                metrics[metric] = 0
+            num_iterations = 0
 
         
         self.progress_bar = tqdm(total=len(self.dataloader), disable=not self.accelerator.is_local_main_process) 
@@ -51,14 +52,12 @@ class Evaluation3D(ABC):
                 final_3d_images[:, :, slice_indices, :] = images
 
                 #calculate metrics 
-                all_clean_images = self.accelerator.gather_for_metrics(clean_images)
-                all_3d_images = self.accelerator.gather_for_metrics(final_3d_images)
-                all_masks = self.accelerator.gather_for_metrics(masks)
-                new_metrics = EvaluationUtils.calc_metrics(all_clean_images, all_3d_images, all_masks)
+                if self.accelerator.is_local_main_process:
+                    new_metrics = EvaluationUtils.calc_metrics(clean_images, final_3d_images, masks) 
 
-                for key, value in new_metrics.items(): 
-                    metrics[key] += value 
-                num_iterations += 1
+                    for key, value in new_metrics.items(): 
+                        metrics[key] += value 
+                    num_iterations += 1
             
                 #postprocess and save image as nifti file
                 final_3d_images = DatasetMRI.postprocess(final_3d_images.squeeze(), *proc_info, self.dataloader.dataset.get_metadata(int(idx)))  
@@ -71,15 +70,17 @@ class Evaluation3D(ABC):
             if (self.config.evaluate_num_batches_3d != -1) and (n_iter >= self.config.evaluate_num_batches_3d-1):
                 break 
         
-        # calculcate mean of metrics and log them
-        for key, value in metrics.items():
-            metrics[key] /= num_iterations
+        #log metrics
+        if self.accelerator.is_local_main_process:
+            # calculcate mean of metrics
+            for key, value in metrics.items():
+                metrics[key] /= num_iterations
 
-        #rename metrics to 3D metrics
-        dim3_metrics = dict()
-        for key, value in metrics.items():
-            dim3_metrics[f"{key}_3D"] = value
-        if self.accelerator.is_main_process: 
+            #rename metrics to 3D metrics
+            dim3_metrics = dict()
+            for key, value in metrics.items():
+                dim3_metrics[f"{key}_3D"] = value
+
             EvaluationUtils.log_metrics(self.tb_summary, global_step, dim3_metrics, self.config)
 
         print("3D evaluation finished")
