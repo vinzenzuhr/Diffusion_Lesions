@@ -15,10 +15,11 @@ class DatasetMRI2D(DatasetMRI):
         root_dir_segm: Path = None, 
         root_dir_masks: Path = None, 
         root_dir_synthesis: Path = None, 
-        img_target_shape = (256,256),     
+        t1n_target_shape = None,     
         only_connected_masks: bool = False,
         min_area = 100, 
-        num_samples=1,
+        num_sorted_samples=1,
+        random_sorted_samples=False,
         transforms=None):
         # if num samples >1 the idx_to_element dict is sorted and has packages of num_samples slices which correspond next to each other
         # only transforms which doesn't change the mask or segmentation are allowed
@@ -28,12 +29,13 @@ class DatasetMRI2D(DatasetMRI):
             root_dir_segm, 
             root_dir_masks, 
             root_dir_synthesis, 
-            img_target_shape, 
+            t1n_target_shape, 
             only_connected_masks)
         
-        self.num_samples = num_samples
+        self.num_sorted_samples = num_sorted_samples
         self.transforms = transforms
         self.min_area = min_area
+        self.random_sorted_samples = random_sorted_samples
         
         if(root_dir_synthesis and not root_dir_masks):
             raise ValueError(f"If root_dir_masks_synthesis is given, then root_dir_masks is mandatory")
@@ -72,9 +74,14 @@ class DatasetMRI2D(DatasetMRI):
                     "path_component_matrix": None,
                     "list_relevant_components": None
                 }) 
+ 
 
-            for slices_dict in slices_dicts:
-                for i in np.arange(len(slices_dict["list_relevant_slices"]), step=num_samples):
+            for slices_dict in slices_dicts:  
+                for i in np.arange(len(slices_dict["list_relevant_slices"]), step=1 if self.random_sorted_samples else num_sorted_samples):
+
+                    # make sure that the next num_samples slices are next to each other
+                    if i+num_sorted_samples-1 >= len(slices_dict["list_relevant_slices"]) or (num_sorted_samples>1 and slices_dict["list_relevant_slices"][i+num_sorted_samples-1]-num_sorted_samples+1 != slices_dict["list_relevant_slices"][i]):
+                        continue
                     self.idx_to_element[idx_dict]=(
                         self.list_paths_t1n[idx_t1n], 
                         slices_dict["path_segm"], 
@@ -83,7 +90,7 @@ class DatasetMRI2D(DatasetMRI):
                         slices_dict["list_relevant_components"][i] if slices_dict["list_relevant_components"] else None, # num samples >1 are not implemented with masks
                         slices_dict["path_synthesis"],
                         slices_dict["list_relevant_slices"][i])
-                    idx_dict+=1
+                    idx_dict+=1  
                 
     def __getitem__(self, idx): 
             t1n_path = self.idx_to_element[idx][0]
@@ -105,15 +112,15 @@ class DatasetMRI2D(DatasetMRI):
             t1n_img, _, mask, t1n_segm, synthesis_mask = self.preprocess(t1n_img, mask, t1n_segm, synthesis_mask)
 
             # get 2D slice from 3D  
-            t1n_slice = t1n_img[:,idx_slice:idx_slice+self.num_samples,:].permute(1, 0, 2)
-            if self.num_samples > 1:
+            t1n_slice = t1n_img[:,idx_slice:idx_slice+self.num_sorted_samples,:].permute(1, 0, 2)
+            if self.num_sorted_samples > 1:
                 t1n_slice = t1n_slice.unsqueeze(1)
  
             # get 2D slice from 3D segmentation
             if(t1n_segm != None):
                 # get 2D slice from 3D 
-                t1n_segm_slice = t1n_segm[:,idx_slice:idx_slice+self.num_samples,:].permute(1, 0, 2)
-                if self.num_samples > 1:
+                t1n_segm_slice = t1n_segm[:,idx_slice:idx_slice+self.num_sorted_samples,:].permute(1, 0, 2)
+                if self.num_sorted_samples > 1:
                     t1n_segm_slice = t1n_segm_slice.unsqueeze(1)
             else:
                 t1n_segm_slice = torch.empty(0)    
@@ -129,16 +136,16 @@ class DatasetMRI2D(DatasetMRI):
                         mask[component_matrix == components[rand_idx]] = 1  
                 else: 
                     if(segm_path):
-                        binary_white_matter_segm = self._get_white_matter_segm(t1n_segm) 
+                        binary_white_matter_segm = self._get_binary_segm(t1n_segm)
                         mask = binary_white_matter_segm * mask 
-                mask_slice = mask[:,idx_slice:idx_slice+self.num_samples,:].permute(1, 0, 2)
-                if self.num_samples > 1:
+                mask_slice = mask[:,idx_slice:idx_slice+self.num_sorted_samples,:].permute(1, 0, 2)
+                if self.num_sorted_samples > 1:
                     mask_slice = mask_slice.unsqueeze(1)
             else:
                 mask_slice = torch.empty(0)    
             if(synthesis_mask != None): 
-                synthesis_slice = synthesis_mask[:,idx_slice:idx_slice+self.num_samples,:].permute(1, 0, 2)
-                if self.num_samples > 1:
+                synthesis_slice = synthesis_mask[:,idx_slice:idx_slice+self.num_sorted_samples,:].permute(1, 0, 2)
+                if self.num_sorted_samples > 1:
                     synthesis_slice = synthesis_slice.unsqueeze(1)
             else:
                 synthesis_slice = torch.empty(0)
@@ -191,6 +198,7 @@ class DatasetMRI2D(DatasetMRI):
                 path_component_matrix = os.path.splitext(path_mask)[0] + "_component_matrix.npy"  
                 component_matrix, _ = self._get_component_matrix(t1n_mask, path_component_matrix)
 
+
             # go through every slice and add (connected) masks to dataset. Make sure that there are at least num_samples slices in a package, which are located next to each other.
             list_relevant_slices = list()
             list_relevant_components = list()
@@ -200,15 +208,15 @@ class DatasetMRI2D(DatasetMRI):
                     continue
 
                 relevant_components = None
-                if self.only_connected_masks: 
+                if self.only_connected_masks:
                     relevant_components = self._get_relevant_components(component_matrix, idx_slice)
                     if len(relevant_components) == 0 and position_in_package == 0:
                         continue
                 list_relevant_slices.append(idx_slice)
-                list_relevant_components.append(relevant_components)
+                list_relevant_components.append(relevant_components) 
 
                 position_in_package += 1
-                if position_in_package == self.num_samples:
+                if position_in_package == self.num_sorted_samples:
                     position_in_package = 0 
 
             output["path_mask"] = path_mask
@@ -228,7 +236,7 @@ class DatasetMRI2D(DatasetMRI):
             _, _, _, t1n_segm, _ = self.preprocess(t1n_img, segm=t1n_segm)
 
             # Restrict slices to white matter regions
-            t1n_segm = self._get_white_matter_segm(t1n_segm)
+            t1n_segm = self._get_binary_segm(t1n_segm)
 
             # get first slice with white matter content  
             i=0

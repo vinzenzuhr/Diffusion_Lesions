@@ -1,5 +1,6 @@
 from math import floor, ceil
 import nibabel as nib
+import nibabel.processing
 import numpy as np
 from pathlib import Path
 import torch
@@ -43,7 +44,7 @@ class DatasetMRI(Dataset):
             root_dir_segm: Path = None, 
             root_dir_masks: Path = None, 
             root_dir_synthesis: Path = None, 
-            img_target_shape = (256,256), 
+            t1n_target_shape = None, 
             only_connected_masks: bool = False):
         
         #Initialize variables
@@ -62,7 +63,7 @@ class DatasetMRI(Dataset):
         self.list_paths_t1n = list(root_dir_img.rglob("*.nii.gz"))
         self.idx_to_element = dict() 
         self.only_connected_masks = only_connected_masks
-        self.img_target_shape = img_target_shape
+        self.t1n_target_shape = t1n_target_shape 
 
         if(root_dir_segm and (len(self.list_paths_t1n) != len(self.list_paths_segm))):
             raise ValueError(f"The amount of T1n files and segm files must be the same. Got {len(self.list_paths_t1n)} and {len(self.list_paths_segm)}")        
@@ -90,6 +91,42 @@ class DatasetMRI(Dataset):
             n (int): Number of connected components
         """
 
+
+        """
+        component_matrix, n = label(t1n_mask)
+        component_matrix = torch.tensor(component_matrix)
+        #torch.save(component_matrix, path_component_matrix)
+        
+        idx_slice=143
+        #print("idx_slice ", idx_slice)
+        #print("relevant_components ", relevant_components)
+        #print("component_matrix[:,idx_slice,:].max() ", component_matrix[:,idx_slice,:].max())
+        import matplotlib.pyplot as plt
+
+        
+        
+        print("path_component_matrix ", path_component_matrix)
+
+        print("t1n mask")
+        print(t1n_mask.shape) 
+        print("t1n min ", t1n_mask.min())
+        print("t1n max ", t1n_mask.max())
+        plt.clf()
+        plt.imshow(t1n_mask[:,idx_slice,:].squeeze())
+        plt.show()
+        print("dazugehörige component matrix")
+        print(component_matrix.shape)
+        plt.clf()
+        plt.imshow(component_matrix[:,idx_slice,:].squeeze())
+        plt.show()
+        print("dazugehörige test") 
+        plt.clf()
+        plt.imshow(torch.logical_and(t1n_mask != 0, t1n_mask != 1).squeeze()[:,idx_slice,:])
+        plt.show()
+        #plt.imshow(component_matrix[:,idx_slice,:] == relevant_components[0])
+        """
+        
+
         # extract connected components from mask or load them if they are already exist
         if os.path.isfile(path_component_matrix):
             component_matrix = torch.load(path_component_matrix)
@@ -101,9 +138,9 @@ class DatasetMRI(Dataset):
 
         return component_matrix, n
 
-    def _get_white_matter_segm(self, segm: torch.Tensor):
+    def _get_binary_segm(self, segm: torch.Tensor):
         """
-        Restricts the slices to white matter regions.
+        Restricts the slices to brain / white matter regions.
 
         Args:
             segm_path (str): Path to the segmentation file
@@ -111,8 +148,12 @@ class DatasetMRI(Dataset):
         Returns:
             binary_white_matter_segm (np.ndarray): Binary mask of the white matter regions
         """
-        # restrict slices to white matter regions
-        binary_white_matter_segm = np.logical_or(segm==41, segm==2)
+
+        # if it's not a binary segmentation restrict slices to DL+Direct white matter regions
+        if segm.max() > 1:
+            binary_white_matter_segm = np.logical_or(segm==41, segm==2)
+        else:
+            binary_white_matter_segm = segm
 
         return binary_white_matter_segm
     
@@ -128,16 +169,17 @@ class DatasetMRI(Dataset):
             t1n_mask (np.ndarray): Mask of the t1n image
         """
 
-        t1n_mask = nib.load(path_mask)
+        t1n_mask = nib.load(path_mask)         
         t1n = nib.load(path_t1n)
         t1n_segm = nib.load(path_segm) if path_segm else None
-        _, _, t1n_mask, t1n_segm, _ = self.preprocess(t1n = t1n, masks = t1n_mask, segm = t1n_segm)   
+        _, _, t1n_mask, t1n_segm, _ = self.preprocess(t1n = t1n, masks = t1n_mask, segm = t1n_segm)  
 
         # if there is a segmentation restrict mask to white matter regions
         if(self.list_paths_segm):
-            binary_white_matter_segm = self._get_white_matter_segm(t1n_segm)  
+            binary_white_matter_segm = self._get_binary_segm(t1n_segm)  
 
             t1n_mask = binary_white_matter_segm * t1n_mask
+            
 
         if (not t1n_mask.any()):
             print("skip t1n, because no mask inside white matter detected")
@@ -145,8 +187,10 @@ class DatasetMRI(Dataset):
         
         return t1n_mask
 
+    #deprecated
     @staticmethod
     def _padding(t1n: torch.tensor, pad_shape: Tuple[int, int, int]):
+        print("deprecated function")
         """
         Pads the images to the pad_shape. 
 
@@ -177,8 +221,10 @@ class DatasetMRI(Dataset):
         t1n = F.pad(t1n, padding, value=0) 
         return t1n
 
+    #deprecated
     @staticmethod
     def _reorient_to_ras(t1n):
+        print("deprecated function")
         orientation = nib.orientations.axcodes2ornt(nib.aff2axcodes(t1n.affine))
         orientation_ras = nib.orientations.axcodes2ornt(('R', 'A', 'S'))
         t1n_transform = nib.orientations.ornt_transform(orientation, orientation_ras)
@@ -201,7 +247,9 @@ class DatasetMRI(Dataset):
         t1n_path = self.idx_to_element[idx][0] 
         # load t1n img
         t1n_img = nib.load(t1n_path) 
-        t1n_img, _ = DatasetMRI._reorient_to_ras(t1n_img)
+        if self.t1n_target_shape:
+            t1n_img = nibabel.processing.conform(t1n_img, out_shape=self.t1n_target_shape, voxel_size=(1.0, 1.0, 1.0), orientation='RAS')
+        #t1n_img, _ = DatasetMRI._reorient_to_ras(t1n_img)
 
         #get metadata
         metadata = {
@@ -214,7 +262,7 @@ class DatasetMRI(Dataset):
         return metadata
     
     @staticmethod
-    def postprocess(t1n: torch.Tensor, t1n_max_v: torch.tensor, inverse_orientation: torch.tensor, shape_before_padding: torch.Size, shape_before_resize: torch.Size, shape_before_strip: torch.Size, metadata: dict):
+    def postprocess(t1n: torch.Tensor, t1n_max_v: torch.tensor, metadata: dict): #, inverse_orientation: torch.tensor, shape_before_padding: torch.Size, shape_before_resize: torch.Size, shape_before_strip: torch.Size, metadata: dict):
         """
         Transforms the images back to their original format. 
         Stripped zero slices can not be recovered.
@@ -225,35 +273,37 @@ class DatasetMRI(Dataset):
         t1n *= t1n_max_v
 
         #remove padding
-        d, h = t1n.shape[-3], t1n.shape[-1]
-        d_new, h_new = shape_before_padding[-3], shape_before_padding[-1]
+        #d, h = t1n.shape[-3], t1n.shape[-1]
+        #d_new, h_new = shape_before_padding[-3], shape_before_padding[-1]
         
-        d_unpad = max((d - d_new) / 2, 0) 
-        h_unpad = max((h - h_new) / 2, 0)
+        #d_unpad = max((d - d_new) / 2, 0) 
+        #h_unpad = max((h - h_new) / 2, 0)
 
-        unpadding = (
-            int(floor(d_unpad)),
-            int(-ceil(d_unpad)) if d_unpad != 0 else None,  
-            int(floor(h_unpad)),
-            int(-ceil(h_unpad)) if h_unpad != 0 else None,
-        ) 
+        #unpadding = (
+        #    int(floor(d_unpad)),
+        #    int(-ceil(d_unpad)) if d_unpad != 0 else None,  
+        #    int(floor(h_unpad)),
+        #    int(-ceil(h_unpad)) if h_unpad != 0 else None,
+        #) 
 
-        t1n = t1n[..., unpadding[0]:unpadding[1], :, unpadding[2]:unpadding[3]] 
+        #t1n = t1n[..., unpadding[0]:unpadding[1], :, unpadding[2]:unpadding[3]] 
         
         #resize to original shape 
-        t1n = torch.nn.functional.interpolate(t1n.unsqueeze(0).unsqueeze(0), size=tuple(shape_before_resize), mode='trilinear').squeeze()
+        #t1n = torch.nn.functional.interpolate(t1n.unsqueeze(0).unsqueeze(0), size=tuple(shape_before_resize), mode='trilinear').squeeze()
 
         # permutation to remain backwards compatible
         t1n = t1n.permute(0, 2, 1)
 
         #reorient image to original orientation
         t1n = nib.nifti1.Nifti1Image(t1n.cpu().numpy(), **metadata) 
-        t1n = t1n.as_reoriented(inverse_orientation.squeeze().cpu().numpy())
+        #t1n = t1n.as_reoriented(inverse_orientation.squeeze().cpu().numpy())
 
         return t1n
     
+    #deprecated
     @staticmethod
     def strip(t1n, masks = None, segm = None, synthesis_mask = None): 
+        print("deprecated function")
         while t1n[:,:,0].abs().sum() == 0:
             t1n = t1n[:,:,1:]
             masks = masks[:,:,1:] if masks != None else None
@@ -298,8 +348,12 @@ class DatasetMRI(Dataset):
             masks: nib.nifti1.Nifti1Image = None, 
             segm: nib.nifti1.Nifti1Image = None, 
             synthesis_mask: nib.nifti1.Nifti1Image = None): 
-        # reorient images to RAS 
-        t1n, inverse_orientation = DatasetMRI._reorient_to_ras(t1n)
+         
+        # reorient images to RAS
+        #t1n, inverse_orientation = DatasetMRI._reorient_to_ras(t1n)
+        if self.t1n_target_shape:
+            t1n = nibabel.processing.conform(t1n, out_shape=self.t1n_target_shape, voxel_size=(1.0, 1.0, 1.0), orientation='RAS')
+
         t1n = t1n.get_fdata()
         t1n = torch.Tensor(t1n)
         
@@ -307,35 +361,47 @@ class DatasetMRI(Dataset):
         t1n = t1n.permute(0, 2, 1)
 
         if masks != None:
-            masks, _ = DatasetMRI._reorient_to_ras(masks)
+            #masks, _ = DatasetMRI._reorient_to_ras(masks)
+            if self.t1n_target_shape:
+                masks = nibabel.processing.conform(masks, out_shape=self.t1n_target_shape, voxel_size=(1.0, 1.0, 1.0), orientation='RAS')
             masks = masks.get_fdata() 
             # copy to avoid negative strides in numpy arrays
             masks = torch.Tensor(masks.copy())
             masks = masks.permute(0, 2, 1)
         if segm != None:
-            segm, _ = DatasetMRI._reorient_to_ras(segm)
+            #segm, _ = DatasetMRI._reorient_to_ras(segm)
+            if self.t1n_target_shape:
+                segm = nibabel.processing.conform(segm, out_shape=self.t1n_target_shape, voxel_size=(1.0, 1.0, 1.0), orientation='RAS')
             segm = segm.get_fdata()
             segm = torch.Tensor(segm.copy())
             segm = segm.permute(0, 2, 1)
         if synthesis_mask != None:
-            synthesis_mask, _ = DatasetMRI._reorient_to_ras(synthesis_mask)
+            if self.t1n_target_shape:
+                synthesis_mask = nibabel.processing.conform(synthesis_mask, out_shape=self.t1n_target_shape, voxel_size=(1.0, 1.0, 1.0), orientation='RAS')
+            #synthesis_mask, _ = DatasetMRI._reorient_to_ras(synthesis_mask)
             synthesis_mask = synthesis_mask.get_fdata()
             synthesis_mask = torch.Tensor(synthesis_mask.copy()) 
             synthesis_mask = synthesis_mask.permute(0, 2, 1)
 
         # remove all zero slices from t1n
         t1n[t1n<0] = 0 #Values below 0 are considered to be noise
-        shape_before_strip = t1n.shape
-        t1n, masks, segm, synthesis_mask = DatasetMRI.strip(t1n, masks, segm, synthesis_mask)
+        if masks != None:
+            masks[masks<0.01] = 0
+        if segm != None:
+            segm[segm<0.01] = 0 
+        if synthesis_mask != None:
+            synthesis_mask[synthesis_mask<0.01] = 0 
+        #shape_before_strip = t1n.shape
+        #t1n, masks, segm, synthesis_mask = DatasetMRI.strip(t1n, masks, segm, synthesis_mask)
 
         # resize image to the max, which fits inside target_shape
-        shape_before_resize=t1n.shape
-        t1n = self.resize_image(t1n)
+        #shape_before_resize=t1n.shape
+        #t1n = self.resize_image(t1n)
         
         #pad the image to target_shape
-        shape_before_padding = t1n.shape
-        pad_shape = (self.img_target_shape[0], t1n.shape[1], self.img_target_shape[1])
-        t1n = DatasetMRI._padding(t1n, pad_shape)
+        #shape_before_padding = t1n.shape
+        #pad_shape = (self.img_target_shape[0], t1n.shape[1], self.img_target_shape[1])
+        #t1n = DatasetMRI._padding(t1n, pad_shape)
 
         #Normalize the image to [-1,1] following the DDPM paper 
         t1n[t1n<0] = 0 #Values below 0 are considered to be noise
@@ -344,21 +410,24 @@ class DatasetMRI(Dataset):
         t1n = (t1n*2) - 1
 
         #information needed for postprocessing
-        proc_info = (t1n_max_v, inverse_orientation, shape_before_padding, shape_before_resize, shape_before_strip)
+        #proc_info = (t1n_max_v, inverse_orientation, shape_before_padding, shape_before_resize, shape_before_strip)
+        proc_info = (t1n_max_v)
 
-        if masks != None:
-            masks = self.resize_image(masks)
-            masks = DatasetMRI._padding(masks, pad_shape)
-        if segm != None:
-            segm = self.resize_image(segm)
-            segm = DatasetMRI._padding(segm, pad_shape)
-        if synthesis_mask != None:
-            synthesis_mask = self.resize_image(synthesis_mask)
-            synthesis_mask = DatasetMRI._padding(synthesis_mask, pad_shape)
+        #if masks != None:
+        #    masks = self.resize_image(masks)
+        #    masks = DatasetMRI._padding(masks, pad_shape)
+        #if segm != None:
+        #    segm = self.resize_image(segm)
+        #    segm = DatasetMRI._padding(segm, pad_shape)
+        #if synthesis_mask != None:
+        #    synthesis_mask = self.resize_image(synthesis_mask)
+        #    synthesis_mask = DatasetMRI._padding(synthesis_mask, pad_shape)
 
         return t1n, proc_info, masks, segm, synthesis_mask
 
+    #deprecated
     def resize_image(self, img):
+        print("deprecated function")
         img_shape = torch.tensor([img.shape[-3], img.shape[-1]])
         shape_max = torch.tensor(self.img_target_shape)
         factors = shape_max / img_shape
