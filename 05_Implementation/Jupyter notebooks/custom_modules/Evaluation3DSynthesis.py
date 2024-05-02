@@ -10,7 +10,7 @@ class Evaluation3DSynthesis(Evaluation3D):
     def _start_pipeline(self, batch, sample_idx, parameters={}):
         clean_images = batch["gt_image"][sample_idx] #torch.Size([1, 256, 256, 256])
         synthesis_masks = batch["synthesis"][sample_idx]  #torch.Size([1, 256, 256, 256])
-        masks = batch["mask"][sample_idx]  #torch.Size([1, 256, 256, 256])
+        masks = batch["mask"][sample_idx].to(torch.bool)  #torch.Size([1, 256, 256, 256])
         if self.config.add_lesion_technique == "mean_intensity":
             lesion_intensity = -0.5492 
         elif self.config.add_lesion_technique == "other_lesions_1stQuantile":
@@ -51,16 +51,21 @@ class Evaluation3DSynthesis(Evaluation3D):
         slice_indices = torch.cat(slice_indices, 0)
         
     
-        #create chunks of slices which have to be modified along the horizontal section 
-        images_with_lesions = images_with_lesions.permute(2,0,1,3)
-        chunks = torch.chunk(images_with_lesions[slice_indices, :, :, :], math.ceil(images_with_lesions.shape[0]/self.config.eval_batch_size), dim=0)
+        #create chunks of slices which have to be modified along the horizontal
+        stacked_images = torch.stack((images_with_lesions[:, :, slice_indices, :], synthesis_masks[:, :, slice_indices, :]), dim=0)
+        stacked_images = stacked_images.permute(0, 3, 1, 2, 4)
+        chunk_size = self.config.eval_batch_size if self.config.num_samples_per_batch == 1 else self.config.num_samples_per_batch
+        chunks = torch.chunk(stacked_images, math.ceil(stacked_images.shape[1]/chunk_size), dim=1)
 
         #modify all slices
         images = [] 
-        for chunk_images in chunks: 
+        for chunk in chunks: 
+            chunk_images = chunk[0]
+            chunk_masks = chunk[1]
 
             new_images = self.pipeline(
                 chunk_images,
+                chunk_masks,
                 timestep=self.config.intermediate_timestep,
                 generator=torch.Generator().manual_seed(self.config.seed), 
                 num_inference_steps = self.config.num_inference_steps,
