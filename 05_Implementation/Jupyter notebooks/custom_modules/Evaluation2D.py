@@ -57,13 +57,12 @@ class Evaluation2D(ABC):
 
     def _save_image(self, images: list[list[PIL.Image]], titles: list[str], path: Path, global_step: int):
         os.makedirs(path, exist_ok=True)
-        for image_list, title in zip(images, titles): 
+        for image_list, title in zip(images, titles):             
             if len(image_list) > 4:
                 ValueError("Number of images in list must be less than 4")
             missing_num = 4-len(image_list)
             for _ in range(missing_num):
-                image_list.append(PIL.Image.new("L", (256, 256), 0))
-
+                image_list.append(PIL.Image.new("L", self.config.unet_img_shape, 0))
             image_grid = make_image_grid(image_list, rows=2, cols=2)
             image_grid.save(f"{path}/{title}_{global_step:07d}.png")
         print("image saved") 
@@ -107,7 +106,8 @@ class Evaluation2D(ABC):
             # calculate metrics
             all_clean_images = self.accelerator.gather_for_metrics(clean_images)
             all_images = self.accelerator.gather_for_metrics(images)
-            all_masks = self.accelerator.gather_for_metrics(masks) 
+            all_masks = self.accelerator.gather_for_metrics(masks)
+
             metrics["lpips"] += self._calc_lpip(all_clean_images, all_images)
             new_metrics = EvaluationUtils.calc_metrics(all_clean_images, all_images, all_masks)
             for key, value in new_metrics.items(): 
