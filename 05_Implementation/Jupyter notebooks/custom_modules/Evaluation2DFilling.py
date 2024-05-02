@@ -13,10 +13,7 @@ class Evaluation2DFilling(Evaluation2D):
         # change range from [-1,1] to [0,1]
         images = (images+1)/2
         masked_images = (masked_images+1)/2
-        clean_images = (clean_images+1)/2
-        # change binary image from 0,1 to 0,255
-        masks = masks*255
-
+        clean_images = (clean_images+1)/2  
 
         list = [images, masked_images, clean_images, masks]
         title_list = ["images", "masked_images", "clean_images", "masks"] 
