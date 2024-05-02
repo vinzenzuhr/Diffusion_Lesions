@@ -2,6 +2,7 @@
 *.safetensors 
 *.nii.gz
 05_Implementation/Jupyter notebooks/segmentation_models
+05_Implementation/Jupyter notebooks/test_notebook.ipynb
 04_Datasets
 05_Implementation/Jupyter notebooks/lesion-filling-256*
 05_Implementation/Jupyter notebooks/lesion-synthesis-256*
