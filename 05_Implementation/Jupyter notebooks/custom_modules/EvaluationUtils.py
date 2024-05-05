@@ -28,19 +28,19 @@ def calc_metrics(images1, images2, masks):
         sim_mat = torch.from_numpy(sim_mat).to(images1.device)
         metrics["ssim_full"] += sim_mat.mean() 
         ssim_mat_out = sim_mat*(1-masks[idx])
-        metrics["ssim_out"] += ssim_mat_out.sum() / torch.count_nonzero(ssim_mat_out)
+        metrics["ssim_out"] += ssim_mat_out.sum() / (1-masks[idx]).sum()
         ssim_mat_in = sim_mat*masks[idx]
-        metrics["ssim_in"] += ssim_mat_in.sum() / torch.count_nonzero(ssim_mat_in)
+        metrics["ssim_in"] += ssim_mat_in.sum() / masks[idx].sum()
 
         # MSE metric 
         se_mat = (images1[idx] - images2[idx])**2
         mse_full = se_mat.mean()
         metrics["mse_full"] += mse_full 
         se_mat_out = se_mat*(1-masks[idx])
-        mse_out = se_mat_out.sum() / torch.count_nonzero(se_mat_out)
+        mse_out = se_mat_out.sum() / (1-masks[idx]).sum()
         metrics["mse_out"] += mse_out
         se_mat_in = se_mat*masks[idx]
-        mse_in = se_mat_in.sum() / torch.count_nonzero(se_mat_in) 
+        mse_in = se_mat_in.sum() / masks[idx].sum()
         metrics["mse_in"] += mse_in 
 
         # PSNR metric
