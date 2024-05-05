@@ -1,4 +1,5 @@
-from Evaluation2D import Evaluation2D
+from custom_modules import Evaluation2D
+
 import torch
 import numpy as np
 import matplotlib.pyplot as plt 

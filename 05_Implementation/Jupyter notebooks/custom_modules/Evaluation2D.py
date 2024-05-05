@@ -1,6 +1,9 @@
 #setup evaluation
+
+from custom_modules import EvaluationUtils
+
+
 from abc import ABC, abstractmethod
-import EvaluationUtils
 from diffusers.utils import make_image_grid
 import numpy as np
 import os

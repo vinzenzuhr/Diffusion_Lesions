@@ -1,4 +1,6 @@
-from DatasetMRI import DatasetMRI
+from custom_modules import DatasetMRI
+
+
 import nibabel as nib
 import numpy as np
 from pathlib import Path

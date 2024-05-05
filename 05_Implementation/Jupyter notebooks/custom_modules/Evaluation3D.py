@@ -1,6 +1,7 @@
+from custom_modules import EvaluationUtils
+from custom_modules import DatasetMRI
+
 from abc import ABC, abstractmethod
-import EvaluationUtils
-from DatasetMRI import DatasetMRI
 import math
 import numpy as np
 import os
@@ -63,7 +64,7 @@ class Evaluation3D(ABC):
                 final_3d_images = DatasetMRI.postprocess(final_3d_images.squeeze(), *proc_info, self.dataloader.dataset.get_metadata(int(idx)))  
                 save_dir = os.path.join(self.config.output_dir, f"samples_3D/{name}") 
                 os.makedirs(save_dir, exist_ok=True)
-                DatasetMRI.save(final_3d_images, f"{save_dir}/T1.nii.gz")
+                DatasetMRI.save(final_3d_images, f"{save_dir}/3Dimg.nii.gz")
 
             self.progress_bar.update(1)
             

@@ -1,8 +1,9 @@
-from RePaintPipeline import RePaintPipeline
-from DDIMInpaintPipeline import DDIMInpaintPipeline
-from DDIMGuidedPipeline import DDIMGuidedPipeline
+from custom_modules import RePaintPipeline
+from custom_modules import DDIMInpaintPipeline
+from custom_modules import DDIMGuidedPipeline
+from custom_modules import GuidedRePaintPipeline
+
 from diffusers import RePaintScheduler
-from GuidedRePaintPipeline import GuidedRePaintPipeline
 
 def get_ddim_guided_pipeline(model, noise_scheduler):
     return DDIMGuidedPipeline(unet=model, scheduler=noise_scheduler)

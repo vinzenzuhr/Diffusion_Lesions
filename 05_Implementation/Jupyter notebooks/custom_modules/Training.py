@@ -1,3 +1,5 @@
+from custom_modules import get_dataloader
+
 from abc import ABC, abstractmethod
 from accelerate import Accelerator
 import numpy as np
@@ -9,7 +11,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data import RandomSampler 
 import torch.nn.functional as F
 from tqdm.auto import tqdm
-from Dataloader import get_dataloader
+
 #from accelerate.utils import InitProcessGroupKwargs
 #from datetime import timedelta
 
@@ -37,13 +39,13 @@ class Training(ABC):
         self.evaluation2D = evaluation2D
         self.evaluation3D = evaluation3D
         self.pipelineFactory = pipelineFactory 
-
+ 
         self.accelerator = Accelerator(
             mixed_precision=config.mixed_precision,
             gradient_accumulation_steps=config.gradient_accumulation_steps, 
             project_dir=os.path.join(config.output_dir, "tensorboard"), #evt. delete
             #kwargs_handlers=[InitProcessGroupKwargs(timeout=timedelta(seconds=2 * 1800))],
-        )
+        ) 
         
         self.train_dataloader = get_dataloader(dataset = datasetTrain, batch_size = config.train_batch_size, random_sampler=True, seed=self.config.seed, multi_sample=multi_sample)
         self.d2_eval_dataloader = get_dataloader(dataset = datasetEvaluation, batch_size = config.eval_batch_size, random_sampler=False, seed=self.config.seed, multi_sample=multi_sample)

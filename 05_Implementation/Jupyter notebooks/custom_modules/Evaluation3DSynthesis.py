@@ -1,4 +1,5 @@
-from Evaluation3D import Evaluation3D
+from custom_modules import Evaluation3D
+
 import torch
 import numpy as np
 import math
@@ -35,9 +36,6 @@ class Evaluation3DSynthesis(Evaluation3D):
         #add new lesions with mean intensity value from existing lesions 
         images_with_lesions = clean_images.clone()
         images_with_lesions[synthesis_masks.to(torch.bool)] = lesion_intensity
-    
-        if self.config.num_samples_per_batch>1:
-            raise ValueError("num_samples_per_batch must be implmented for Evaluation3DSynthesis")
 
         # get slices which have to be modified.  Make sure that there are at least num_samples slices in a package, which are located next to each other.
         position_in_package = 0
@@ -46,7 +44,7 @@ class Evaluation3DSynthesis(Evaluation3D):
             if (synthesis_masks[:, :, slice_idx, :]).any() or position_in_package>0:
                 slice_indices.append(slice_idx.unsqueeze(0)) 
                 position_in_package += 1
-                if position_in_package == self.config.num_samples_per_batch:
+                if position_in_package == self.config.num_sorted_samples:
                     position_in_package = 0  
         slice_indices = torch.cat(slice_indices, 0)
         
@@ -54,7 +52,7 @@ class Evaluation3DSynthesis(Evaluation3D):
         #create chunks of slices which have to be modified along the horizontal
         stacked_images = torch.stack((images_with_lesions[:, :, slice_indices, :], synthesis_masks[:, :, slice_indices, :]), dim=0)
         stacked_images = stacked_images.permute(0, 3, 1, 2, 4)
-        chunk_size = self.config.eval_batch_size if self.config.num_samples_per_batch == 1 else self.config.num_samples_per_batch
+        chunk_size = self.config.eval_batch_size if self.config.num_sorted_samples == 1 else self.config.num_sorted_samples
         chunks = torch.chunk(stacked_images, math.ceil(stacked_images.shape[1]/chunk_size), dim=1)
 
         #modify all slices
