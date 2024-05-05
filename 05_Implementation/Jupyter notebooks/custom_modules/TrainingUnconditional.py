@@ -1,6 +1,4 @@
-from diffusers import RePaintScheduler  
-from Training import Training 
-from RePaintPipeline import RePaintPipeline
+from custom_modules import Training  
 
 class TrainingUnconditional(Training):
     def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory, multi_sample=False, deactivate3Devaluation = True, evaluation_pipeline_parameters = {}):
@@ -15,7 +13,7 @@ class TrainingUnconditional(Training):
         
         return noisy_images, noise, timesteps
 
-    def evaluate(self, pipeline=None):
+    def evaluate(self, pipeline=None, deactivate_save_model=False):
         # Create pipeline if not given
         self.model.eval()
         if pipeline is None:
@@ -52,6 +50,6 @@ class TrainingUnconditional(Training):
 
         # Save model
         if self.accelerator.is_main_process:
-            if pipeline is not None and ((self.epoch) % self.config.save_model_epochs == 0 or self.epoch == self.config.num_epochs - 1): 
+            if pipeline is not None and ((self.epoch) % self.config.save_model_epochs == 0 or self.epoch == self.config.num_epochs - 1) and not deactivate_save_model: 
                 pipeline.save_pretrained(self.config.output_dir)
  

@@ -1,8 +1,7 @@
-#import custom modules
-from DDIMInpaintPipeline import DDIMInpaintPipeline
+#import custom modules 
+from custom_modules import Training
 
 # import other modules
-from Training import Training
 import torch
 
 class TrainingConditional(Training):
@@ -29,7 +28,7 @@ class TrainingConditional(Training):
 
         return input, noise, timesteps
 
-    def evaluate(self, pipeline=None):
+    def evaluate(self, pipeline=None, deactivate_save_model=False):
         # Create pipeline if not given
         self.model.eval()
         if pipeline is None:
@@ -60,7 +59,7 @@ class TrainingConditional(Training):
     
         # Save model
         if self.accelerator.is_main_process:
-            if pipeline is not None and ((self.epoch) % self.config.save_model_epochs == 0 or self.epoch == self.config.num_epochs - 1): 
+            if pipeline is not None and ((self.epoch) % self.config.save_model_epochs == 0 or self.epoch == self.config.num_epochs - 1) and not deactivate_save_model: 
                 pipeline.save_pretrained(self.config.output_dir)
 
 
