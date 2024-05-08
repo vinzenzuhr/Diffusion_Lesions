@@ -4,13 +4,6 @@
 # In[1]:
 
 
-import sys
-sys.path.insert(1, './custom_modules')
-
-
-# In[2]:
-
-
 #create config
 from dataclasses import dataclass
 
@@ -21,17 +14,17 @@ class TrainingConfig:
     channels = 1 
     train_batch_size = 4
     eval_batch_size = 4
-    num_samples_per_batch = 1
-    num_epochs = 280 # nochmals einschätzen
+    num_sorted_samples = 1
+    num_epochs = 240 # nochmals einschätzen
     gradient_accumulation_steps = 1
     learning_rate = 1e-4
     lr_warmup_steps = 100 #500
-    evaluate_epochs = 20 #30
+    evaluate_epochs = 14 #30
     deactivate3Devaluation = True
-    evaluate_num_batches = -1 # one batch needs ~15s. 
+    evaluate_num_batches = 30 # one batch needs ~15s. 
     evaluate_num_batches_3d = -1  
     evaluate_3D_epochs = 1000  # one 3D evaluation needs ~20min
-    save_model_epochs = 60 # 300
+    save_model_epochs = 150 # 300
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
     output_dir = "lesion-filling-256-cond-circle"  # the model name locally and on the HF Hub
     dataset_train_path = "./datasets/filling/dataset_train/imgs"
@@ -44,8 +37,8 @@ class TrainingConfig:
     eval_only_connected_masks=False 
     num_inference_steps=50
     log_csv = False
-    mode = "train" # train / eval
-    debug = True
+    mode = "eval" # train / eval
+    debug = False
     brightness_augmentation = True
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub
@@ -56,7 +49,7 @@ class TrainingConfig:
 config = TrainingConfig()
 
 
-# In[3]:
+# In[2]:
 
 
 if config.debug:
@@ -71,7 +64,7 @@ if config.debug:
     config.masks_train_path = "./datasets/filling/dataset_eval/masks"
 
 
-# In[4]:
+# In[3]:
 
 
 #setup huggingface accelerate
@@ -81,14 +74,13 @@ import accelerate
 accelerate.commands.config.default.write_basic_config(config.mixed_precision)
 
 
-# In[5]:
+# In[4]:
 
 
-from DatasetMRI2D import DatasetMRI2D
-from DatasetMRI3D import DatasetMRI3D
+from custom_modules import DatasetMRI2D, DatasetMRI3D, ScaleDecorator
+
 from pathlib import Path
-from torchvision import transforms
-from transform_utils import ScaleDecorator 
+from torchvision import transforms 
 
 transformations = None
 if config.brightness_augmentation:
@@ -102,7 +94,7 @@ dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), 
 
 # ### Visualize dataset
 
-# In[6]:
+# In[5]:
 
 
 import matplotlib.pyplot as plt
@@ -113,7 +105,7 @@ axis[1].imshow(np.logical_or(datasetTrain[idx]["segm"].squeeze()==41, datasetTra
 fig.show 
 
 
-# In[7]:
+# In[6]:
 
 
 # Get 6 random sample
@@ -127,7 +119,7 @@ for i, idx in enumerate(random_indices):
 fig.show()
 
 
-# In[8]:
+# In[7]:
 
 
 # Plot: t1n images
@@ -140,7 +132,7 @@ fig.show()
 
 # ### Playground for random circles
 
-# In[9]:
+# In[8]:
 
 
 # visualize normal distributions of center points
@@ -153,7 +145,7 @@ for center in centers:
     plt.scatter(center[0], center[1])
 
 
-# In[10]:
+# In[9]:
 
 
 example=torch.zeros((10,256,256)).shape
@@ -174,7 +166,7 @@ plt.imshow(((datasetTrain[70]["gt_image"].squeeze()+1)/2)*mask[:,:,4])
 
 # ### Prepare Training
 
-# In[11]:
+# In[10]:
 
 
 #create model
@@ -207,7 +199,7 @@ model = UNet2DModel(
 config.model = "UNet2DModel"
 
 
-# In[12]:
+# In[11]:
 
 
 #setup noise scheduler
@@ -229,7 +221,7 @@ noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
 config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
 
 
-# In[13]:
+# In[12]:
 
 
 # setup lr scheduler
@@ -246,14 +238,11 @@ lr_scheduler = get_cosine_schedule_with_warmup(
 config.lr_scheduler = "cosine_schedule_with_warmup"
 
 
-# In[14]:
+# In[13]:
 
 
-from TrainingConditional import TrainingConditional
-from DDIMInpaintPipeline import DDIMInpaintPipeline
-from Evaluation2DFilling import Evaluation2DFilling
-from Evaluation3DFilling import Evaluation3DFilling  
-import PipelineFactories
+from custom_modules import TrainingConditional, DDIMInpaintPipeline, Evaluation2DFilling, Evaluation3DFilling  
+from custom_modules import PipelineFactories
 
 config.conditional_data = "Circles"
 
@@ -273,7 +262,7 @@ args = {
 trainingCircles = TrainingConditional(**args)
 
 
-# In[15]:
+# In[ ]:
 
 
 if config.mode == "train":
