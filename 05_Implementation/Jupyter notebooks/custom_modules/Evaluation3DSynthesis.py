@@ -1,14 +1,14 @@
-from custom_modules import Evaluation3D
+from custom_modules import Evaluation3D, DatasetMRI
 
 import torch
 import numpy as np
 import math
 
 class Evaluation3DSynthesis(Evaluation3D):
-    def __init__(self, config, pipeline, dataloader, tb_summary, accelerator):
-        super().__init__(config, pipeline, dataloader, tb_summary, accelerator) 
+    def __init__(self, config, dataloader, tb_summary, accelerator):
+        super().__init__(config, dataloader, tb_summary, accelerator) 
 
-    def _start_pipeline(self, batch, sample_idx, parameters={}):
+    def _start_pipeline(self, pipeline, batch, sample_idx, parameters={}):
         clean_images = batch["gt_image"][sample_idx] #torch.Size([1, 256, 256, 256])
         synthesis_masks = batch["synthesis"][sample_idx]  #torch.Size([1, 256, 256, 256])
         masks = batch["mask"][sample_idx].to(torch.bool)  #torch.Size([1, 256, 256, 256])
@@ -61,11 +61,10 @@ class Evaluation3DSynthesis(Evaluation3D):
             chunk_images = chunk[0]
             chunk_masks = chunk[1]
 
-            new_images = self.pipeline(
+            new_images = pipeline(
                 chunk_images,
                 chunk_masks,
                 timestep=self.config.intermediate_timestep,
-                generator=torch.Generator().manual_seed(self.config.seed), 
                 num_inference_steps = self.config.num_inference_steps,
                 **parameters
             ).images
@@ -76,3 +75,6 @@ class Evaluation3DSynthesis(Evaluation3D):
         images = images.permute(1, 2, 0, 3) 
                 
         return images, clean_images, slice_indices, synthesis_masks
+    
+    def _save_image(self, final_3d_images, save_dir):
+        DatasetMRI.save(final_3d_images, f"{save_dir}/FLAIR.nii.gz")

@@ -36,8 +36,6 @@ class Training(ABC):
         self.noise_scheduler = noise_scheduler
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler  
-        self.evaluation2D = evaluation2D
-        self.evaluation3D = evaluation3D
         self.pipelineFactory = pipelineFactory 
  
         self.accelerator = Accelerator(
@@ -49,9 +47,7 @@ class Training(ABC):
         
         self.train_dataloader = get_dataloader(dataset = datasetTrain, batch_size = config.train_batch_size, random_sampler=True, seed=self.config.seed, multi_sample=multi_sample)
         self.d2_eval_dataloader = get_dataloader(dataset = datasetEvaluation, batch_size = config.eval_batch_size, random_sampler=False, seed=self.config.seed, multi_sample=multi_sample)
-        self.d3_eval_dataloader = get_dataloader(dataset = dataset3DEvaluation, batch_size = 1, random_sampler=False, seed=self.config.seed, multi_sample=False) 
-
-         
+        self.d3_eval_dataloader = get_dataloader(dataset = dataset3DEvaluation, batch_size = 1, random_sampler=False, seed=self.config.seed, multi_sample=False)        
 
         if self.accelerator.is_main_process:
             #setup tensorboard
@@ -62,11 +58,20 @@ class Training(ABC):
                 os.makedirs(config.output_dir, exist_ok=True) 
             self.accelerator.init_trackers("train_example") #evt. delete
 
-
         self.model, self.optimizer, self.train_dataloader, self.d2_eval_dataloader, self.d3_eval_dataloader, self.lr_scheduler = self.accelerator.prepare(
             self.model, self.optimizer, self.train_dataloader, self.d2_eval_dataloader, self.d3_eval_dataloader, self.lr_scheduler
         )
  
+        self.evaluation2D = evaluation2D(
+            config,  
+            self.d2_eval_dataloader, 
+            None if not self.accelerator.is_main_process else self.tb_summary, 
+            self.accelerator)
+        self.evaluation3D = evaluation3D(
+            config,  
+            self.d3_eval_dataloader, 
+            None if not self.accelerator.is_main_process else self.tb_summary, 
+            self.accelerator)
 
         os.makedirs(config.output_dir, exist_ok=True)  #evt. delete
 
@@ -166,7 +171,7 @@ class Training(ABC):
 
     def _get_noisy_images(self, clean_images, generator=None):
 
-        # Sample noise to add to the images
+        # Sample noise to add to the images 
         noise = torch.randn(clean_images.shape, device=clean_images.device, generator=generator)
         bs = clean_images.shape[0]
 
@@ -174,7 +179,7 @@ class Training(ABC):
         timesteps = torch.randint(
             0, self.noise_scheduler.config.num_train_timesteps, (bs,), device=clean_images.device,
             dtype=torch.int64, generator=generator
-        ) 
+        )
 
         # Add noise to the voided images according to the noise magnitude at each timestep (forward diffusion process)
         noisy_images = self.noise_scheduler.add_noise(clean_images, noise, timesteps) 

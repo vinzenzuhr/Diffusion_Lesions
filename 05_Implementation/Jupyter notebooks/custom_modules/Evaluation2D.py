@@ -13,7 +13,7 @@ import PIL
 import random
 import math
 from skimage.metrics import structural_similarity, mean_squared_error
-import torch
+import torch 
 from torcheval.metrics import PeakSignalNoiseRatio
 from torchvision.ops import masks_to_boxes
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
@@ -21,14 +21,13 @@ from torchvision.transforms.functional import to_pil_image
 from tqdm.auto import tqdm
 
 class Evaluation2D(ABC):
-    def __init__(self, config, pipeline, dataloader, tb_summary, accelerator, _get_training_input):
-        self.config = config
-        self.pipeline = pipeline
+    def __init__(self, config, dataloader, tb_summary, accelerator):
+        self.config = config 
         self.dataloader = dataloader
         self.tb_summary = tb_summary
-        self.accelerator = accelerator
-        self._get_training_input = _get_training_input 
+        self.accelerator = accelerator 
         self.lpips_metric = LearnedPerceptualImagePatchSimilarity(net_type='alex').to(self.accelerator.device)
+        self.best_val_loss = float("inf")
 
     def _calc_lpip(self, images_1, images_2):
 
@@ -71,10 +70,10 @@ class Evaluation2D(ABC):
         print("image saved") 
 
     @abstractmethod
-    def _start_pipeline(self, clean_images, masks, parameters):
+    def _start_pipeline(self, pipeline, batch, generator, parameters):
         pass
 
-    def evaluate(self, global_step, parameters={}):
+    def evaluate(self, pipeline, global_step, _get_training_input, parameters={}):
         #initialize metrics
         metrics = dict()
         metric_list = ["ssim_full", "ssim_out", "ssim_in", "mse_full", "mse_out", "mse_in", "psnr_full", "psnr_out", "psnr_in", "val_loss", "lpips"] 
@@ -88,10 +87,12 @@ class Evaluation2D(ABC):
             self.dataloader._index_sampler.sampler.generator.manual_seed(self.config.seed)
         else:
             self.dataloader._index_sampler.batch_sampler.sampler.generator.manual_seed(self.config.seed)
-        for n_iter, batch in enumerate(self.dataloader): 
+        
+        eval_generator = torch.Generator(device=self.accelerator.device).manual_seed(self.config.seed)
+        for n_iter, batch in enumerate(self.dataloader):
             # calc validation loss
-            input, noise, timesteps = self._get_training_input(batch, generator=torch.Generator(device=self.accelerator.device).manual_seed(self.config.seed))   
-            noise_pred = self.pipeline.unet(input, timesteps, return_dict=False)[0]
+            input, noise, timesteps = _get_training_input(batch, generator=eval_generator)
+            noise_pred = pipeline.unet(input, timesteps, return_dict=False)[0]
             loss = F.mse_loss(noise_pred, noise)          
             all_loss = self.accelerator.gather_for_metrics(loss).mean() 
             metrics["val_loss"] += all_loss 
@@ -99,8 +100,10 @@ class Evaluation2D(ABC):
             del input, noise, timesteps, noise_pred, loss, all_loss 
             torch.cuda.empty_cache() 
             # run pipeline. The returned masks can be either existing lesions or the synthetic ones
-            images, clean_images, masks = self._start_pipeline( 
+            images, clean_images, masks = self._start_pipeline(
+                pipeline,  
                 batch,
+                eval_generator,
                 parameters
             ) 
             # transform from B x H x W x C to B x C x H x W 
@@ -120,10 +123,6 @@ class Evaluation2D(ABC):
             
             if (self.config.evaluate_num_batches != -1) and (n_iter >= self.config.evaluate_num_batches-1):
                 break 
-
-
-
-
         
         # calculate average metrics
         for key, value in metrics.items():
@@ -140,3 +139,9 @@ class Evaluation2D(ABC):
             list, title_list = self._get_image_lists(images, clean_images, masks, batch)
             image_list = [[to_pil_image(x, mode="L") for x in images] for images in list]
             self._save_image(image_list, title_list, os.path.join(self.config.output_dir, "samples_2D"), global_step)
+
+            # save model
+            if self.best_val_loss > metrics["val_loss"]:
+                self.best_val_loss = metrics["val_loss"]
+                pipeline.save_pretrained(self.config.output_dir)
+                print("model saved")

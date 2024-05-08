@@ -1,5 +1,4 @@
-from custom_modules import EvaluationUtils
-from custom_modules import DatasetMRI
+from custom_modules import EvaluationUtils, DatasetMRI
 
 from abc import ABC, abstractmethod
 import math
@@ -9,9 +8,8 @@ import torch
 from tqdm.auto import tqdm
 
 class Evaluation3D(ABC):
-    def __init__(self, config, pipeline, dataloader, tb_summary, accelerator):
-        self.config = config
-        self.pipeline = pipeline
+    def __init__(self, config, dataloader, tb_summary, accelerator):
+        self.config = config 
         self.dataloader = dataloader
         self.tb_summary = tb_summary
         self.accelerator = accelerator
@@ -24,7 +22,7 @@ class Evaluation3D(ABC):
     def _start_pipeline(self, clean_images, masks, parameters):
         pass
     
-    def evaluate(self, global_step, parameters={}):
+    def evaluate(self, pipeline, global_step, parameters={}):
         #initialize metrics 
         if self.accelerator.is_local_main_process:
             metrics = dict()
@@ -35,7 +33,7 @@ class Evaluation3D(ABC):
 
         
         self.progress_bar = tqdm(total=len(self.dataloader), disable=not self.accelerator.is_local_main_process) 
-        self.progress_bar.set_description(f"Evaluation 3D") 
+        self.progress_bar.set_description(f"Evaluation 3D")
  
         print("Start 3D evaluation")
         for n_iter, batch in enumerate(self.dataloader): 
@@ -46,7 +44,7 @@ class Evaluation3D(ABC):
                 name = batch["name"][sample_idx]
                 proc_info = batch["proc_info"][sample_idx]
 
-                images, clean_images, slice_indices, masks = self._start_pipeline(batch, sample_idx, parameters)    
+                images, clean_images, slice_indices, masks = self._start_pipeline(pipeline, batch, sample_idx, parameters)    
             
                 #overwrite the original 3D image with the modified 2D slices
                 final_3d_images = torch.clone(clean_images.detach()) 
@@ -64,7 +62,7 @@ class Evaluation3D(ABC):
                 final_3d_images = DatasetMRI.postprocess(final_3d_images.squeeze(), *proc_info, self.dataloader.dataset.get_metadata(int(idx)))  
                 save_dir = os.path.join(self.config.output_dir, f"samples_3D/{name}") 
                 os.makedirs(save_dir, exist_ok=True)
-                DatasetMRI.save(final_3d_images, f"{save_dir}/3Dimg.nii.gz")
+                self._save_image(final_3d_images, save_dir)
 
             self.progress_bar.update(1)
             

@@ -38,29 +38,11 @@ class TrainingConditional(Training):
         
         # Evaluate 2D images
         if (self.epoch) % self.config.evaluate_epochs == 0 or self.epoch == self.config.num_epochs - 1: 
-            eval = self.evaluation2D(
-                self.config, 
-                pipeline, 
-                self.d2_eval_dataloader, 
-                None if not self.accelerator.is_main_process else self.tb_summary, 
-                self.accelerator, 
-                self._get_training_input)
-            eval.evaluate(self.global_step)
+            self.evaluation2D.evaluate(pipeline, self.global_step, self._get_training_input)
 
         # Evaluate 3D images composed of 2D slices
-        if (self.epoch) % self.config.evaluate_3D_epochs == 0 or self.epoch == self.config.num_epochs - 1: 
-            eval = self.evaluation3D(
-                self.config, 
-                pipeline, 
-                self.d3_eval_dataloader, 
-                None if not self.accelerator.is_main_process else self.tb_summary, 
-                self.accelerator)  
-            eval.evaluate(self.global_step)
-    
-        # Save model
-        if self.accelerator.is_main_process:
-            if pipeline is not None and ((self.epoch) % self.config.save_model_epochs == 0 or self.epoch == self.config.num_epochs - 1) and not deactivate_save_model: 
-                pipeline.save_pretrained(self.config.output_dir)
+        if (not self.config.deactivate3Devaluation and ((self.epoch) % self.config.evaluate_3D_epochs == 0 or self.epoch == self.config.num_epochs - 1)): 
+            self.evaluation3D.evaluate(pipeline, self.global_step)
 
 
 

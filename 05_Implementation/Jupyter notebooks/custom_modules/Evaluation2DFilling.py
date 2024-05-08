@@ -4,8 +4,8 @@ import torch
 import numpy as np 
 
 class Evaluation2DFilling(Evaluation2D):
-    def __init__(self, config, pipeline, dataloader, tb_summary, accelerator, _get_training_input):
-        super().__init__(config, pipeline, dataloader, tb_summary, accelerator, _get_training_input) 
+    def __init__(self, config, dataloader, tb_summary, accelerator):
+        super().__init__(config, dataloader, tb_summary, accelerator) 
     
     def _get_image_lists(self, images, clean_images, masks, batch):
         # save last batch as sample images
@@ -20,15 +20,15 @@ class Evaluation2DFilling(Evaluation2D):
         title_list = ["images", "masked_images", "clean_images", "masks"] 
         return list, title_list
 
-    def _start_pipeline(self, batch, parameters={}): 
+    def _start_pipeline(self, pipeline, batch, generator, parameters={}): 
         clean_images = batch["gt_image"]
         masks = batch["mask"] 
         voided_images = clean_images*(1-masks)
          
-        inpainted_images = self.pipeline(
+        inpainted_images = pipeline(
             voided_images,
             masks,
-            generator=torch.Generator().manual_seed(self.config.seed), 
+            generator=generator, 
             num_inference_steps = self.config.num_inference_steps,
             **parameters
         ).images 

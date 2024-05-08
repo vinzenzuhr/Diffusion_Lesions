@@ -1,14 +1,14 @@
-from custom_modules import Evaluation3D
+from custom_modules import Evaluation3D, DatasetMRI
 
 import torch
 import numpy as np
 import math
 
 class Evaluation3DFilling(Evaluation3D):
-    def __init__(self, config, pipeline, dataloader, tb_summary, accelerator):
-        super().__init__(config, pipeline, dataloader, tb_summary, accelerator)
+    def __init__(self, config, dataloader, tb_summary, accelerator):
+        super().__init__(config, dataloader, tb_summary, accelerator)
 
-    def _start_pipeline(self, batch, sample_idx, parameters={}):
+    def _start_pipeline(self, pipeline, batch, sample_idx, parameters={}):
 
         clean_images = batch["gt_image"][sample_idx] #torch.Size([1, 256, 256, 256])
         masks = batch["mask"][sample_idx]  #torch.Size([1, 256, 256, 256])
@@ -51,10 +51,9 @@ class Evaluation3DFilling(Evaluation3D):
             chunk_masks = chunk[1]
             chunk_voided_images = chunk_images*(1-chunk_masks)
 
-            new_images = self.pipeline(
+            new_images = pipeline(
                 chunk_voided_images,
                 chunk_masks,
-                generator=torch.Generator().manual_seed(self.config.seed), 
                 num_inference_steps = self.config.num_inference_steps,
                 **parameters
             ).images
@@ -65,3 +64,6 @@ class Evaluation3DFilling(Evaluation3D):
         images = images.permute(1, 2, 0, 3) 
 
         return images, clean_images, slice_indices, masks
+    
+    def _save_image(self, final_3d_images, save_dir):
+        DatasetMRI.save(final_3d_images, f"{save_dir}/T1.nii.gz")

@@ -5,9 +5,8 @@ import numpy as np
 import matplotlib.pyplot as plt 
 
 class Evaluation2DSynthesis(Evaluation2D):
-    def __init__(self, config, pipeline, dataloader, tb_summary, accelerator, _get_training_input):
-        assert type(pipeline).__name__ == "GuidedRePaintPipeline" or type(pipeline).__name__ == "DDIMGuidedPipeline" , "Pipeline must be of type DDIMGuidedPipeline or GuidedRePaintPipeline"
-        super().__init__(config, pipeline, dataloader, tb_summary, accelerator, _get_training_input)
+    def __init__(self, config, dataloader, tb_summary, accelerator):
+        super().__init__(config, dataloader, tb_summary, accelerator)
 
     def _add_coarse_lesions(self, clean_images, batch):
         synthesis_masks = batch["synthesis"] 
@@ -51,18 +50,21 @@ class Evaluation2DSynthesis(Evaluation2D):
         title_list = ["images", "masked_images", "clean_images", "synthesis_masks", "images_with_lesions"] 
         return list, title_list
 
-    def _start_pipeline(self, batch, parameters={}):
+    def _start_pipeline(self, pipeline, batch, generator, parameters={}):
+        
+        assert type(pipeline).__name__ == "GuidedRePaintPipeline" or type(pipeline).__name__ == "DDIMGuidedPipeline" , "Pipeline must be of type DDIMGuidedPipeline or GuidedRePaintPipeline"
+
         clean_images = batch["gt_image"]
           
         #add coarse lesions
         images_with_lesions, synthesis_masks = self._add_coarse_lesions(clean_images, batch)
 
         #run it through network        
-        synthesized_images = self.pipeline(
+        synthesized_images = pipeline(
             images_with_lesions,
             synthesis_masks,
             timestep=self.config.intermediate_timestep,
-            generator=torch.Generator().manual_seed(self.config.seed), 
+            generator=generator, 
             num_inference_steps = self.config.num_inference_steps,
             **parameters
         ).images     
