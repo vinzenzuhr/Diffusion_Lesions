@@ -45,7 +45,9 @@ class DatasetMRI(Dataset):
             root_dir_masks: Path = None, 
             root_dir_synthesis: Path = None, 
             t1n_target_shape = None, 
-            only_connected_masks: bool = False):
+            only_connected_masks: bool = False,
+            dilation: int = 0,
+            restrict_mask_to_wm: bool = False):
         
         #Initialize variables
         self.root_dir_img = root_dir_img  
@@ -53,17 +55,19 @@ class DatasetMRI(Dataset):
             #make a list of lists containing all paths to masks
             self.list_paths_masks = list()
             folder_list = list(root_dir_masks.glob("*")) 
-            for folder in folder_list:
-                self.list_paths_masks.append(list(folder.rglob("*.nii.gz")))
+            for folder in folder_list: 
+                self.list_paths_masks.append(list(folder.rglob("*.nii.gz"))) 
         else:
             self.list_paths_masks = None 
 
         self.list_paths_segm = list(root_dir_segm.rglob("*.nii.gz")) if root_dir_segm else None 
         self.list_paths_synthesis = list(root_dir_synthesis.rglob("*.nii.gz")) if root_dir_synthesis else None 
-        self.list_paths_t1n = list(root_dir_img.rglob("*.nii.gz"))
+        self.list_paths_t1n = list(root_dir_img.rglob("*.nii.gz")) 
         self.idx_to_element = dict() 
         self.only_connected_masks = only_connected_masks
-        self.t1n_target_shape = t1n_target_shape 
+        self.t1n_target_shape = t1n_target_shape
+        self.dilation = dilation 
+        self.restrict_mask_to_wm = restrict_mask_to_wm
 
         if(root_dir_segm and (len(self.list_paths_t1n) != len(self.list_paths_segm))):
             raise ValueError(f"The amount of T1n files and segm files must be the same. Got {len(self.list_paths_t1n)} and {len(self.list_paths_segm)}")        
@@ -71,7 +75,11 @@ class DatasetMRI(Dataset):
             raise ValueError(f"The amount of T1n files and mask folders must be the same. Got {len(self.list_paths_t1n)} and {len(self.list_paths_masks)}")    
         if(root_dir_synthesis and (len(self.list_paths_t1n)!= len(self.list_paths_synthesis))):
             raise ValueError(f"The amount of T1n files and mask synthesis files must be the same. Got {len(self.list_paths_t1n)} and {len(self.list_paths_synthesis)}") 
-        
+        if(dilation>0 and (not root_dir_segm or not root_dir_masks)):
+            raise ValueError(f"For dilation the segmentation and mask files are mandatory") 
+
+
+
     def __len__(self): 
         return len(self.idx_to_element.keys()) 
 
@@ -175,7 +183,7 @@ class DatasetMRI(Dataset):
         _, _, t1n_mask, t1n_segm, _ = self.preprocess(t1n = t1n, masks = t1n_mask, segm = t1n_segm)  
 
         # if there is a segmentation restrict mask to white matter regions
-        if(self.list_paths_segm):
+        if(self.list_paths_segm and self.restrict_mask_to_wm):
             binary_white_matter_segm = self._get_binary_segm(t1n_segm)  
 
             t1n_mask = binary_white_matter_segm * t1n_mask
@@ -233,6 +241,19 @@ class DatasetMRI(Dataset):
         inverse_orientation = torch.tensor(nib.orientations.ornt_transform(orientation_ras, orientation))
 
         return t1n_new, inverse_orientation
+
+    def dilate_mask(self, mask, binary_segm, num_pixels=1):
+        kernel = torch.ones((num_pixels*2+1,num_pixels*2+1, num_pixels*2+1)) 
+
+        dilated_mask = F.conv3d(
+            mask.unsqueeze(0).unsqueeze(0),
+            kernel.unsqueeze(0).unsqueeze(0), 
+            padding='same'
+            )*binary_segm.unsqueeze(0).unsqueeze(0)
+        
+        dilated_mask[mask.unsqueeze(0).unsqueeze(0).to(torch.bool)]=1.
+        
+        return dilated_mask.squeeze()
     
     def get_metadata(self, idx):
         """
@@ -391,6 +412,13 @@ class DatasetMRI(Dataset):
             segm[segm<0.01] = 0 
         if synthesis_mask != None:
             synthesis_mask[synthesis_mask<0.01] = 0 
+
+        if self.dilation > 0:
+            masks = self.dilate_mask(masks, self._get_binary_segm(segm), self.dilation)
+        
+
+
+        
         #shape_before_strip = t1n.shape
         #t1n, masks, segm, synthesis_mask = DatasetMRI.strip(t1n, masks, segm, synthesis_mask)
 

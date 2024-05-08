@@ -22,7 +22,9 @@ class DatasetMRI2D(DatasetMRI):
         min_area = 100, 
         num_sorted_samples=1,
         random_sorted_samples=False,
-        transforms=None):
+        transforms=None,
+        dilation=0,
+        restrict_mask_to_wm=False):
         # if num samples >1 the idx_to_element dict is sorted and has packages of num_samples slices which correspond next to each other
         # only transforms which doesn't change the mask or segmentation are allowed
 
@@ -32,7 +34,9 @@ class DatasetMRI2D(DatasetMRI):
             root_dir_masks, 
             root_dir_synthesis, 
             t1n_target_shape, 
-            only_connected_masks)
+            only_connected_masks,
+            dilation,
+            restrict_mask_to_wm)
         
         self.num_sorted_samples = num_sorted_samples
         self.transforms = transforms
@@ -44,11 +48,11 @@ class DatasetMRI2D(DatasetMRI):
 
         # go through all 3D segmentation and add relevant 2D slices to dict
         idx_dict=0 
-        for idx_t1n in tqdm(np.arange(len(self.list_paths_t1n))): 
+        for idx_t1n in tqdm(np.arange(len(self.list_paths_t1n))):  
             slices_dicts = list()            
             # if there are masks restrict slices to mask content
             if(self.list_paths_masks):  
-                # multiple masks for one t1n image are possible
+                # multiple masks for one t1n image are possible  
                 for path_mask in self.list_paths_masks[idx_t1n]: 
                     slices_dicts.append(
                         self._get_relevant_slices(
@@ -137,14 +141,15 @@ class DatasetMRI2D(DatasetMRI):
                     for rand_idx in rand_components_idx: 
                         mask[component_matrix == components[rand_idx]] = 1  
                 else: 
-                    if(segm_path):
+                    if(segm_path and self.restrict_mask_to_wm):
                         binary_white_matter_segm = self._get_binary_segm(t1n_segm)
                         mask = binary_white_matter_segm * mask 
                 mask_slice = mask[:,idx_slice:idx_slice+self.num_sorted_samples,:].permute(1, 0, 2)
                 if self.num_sorted_samples > 1:
                     mask_slice = mask_slice.unsqueeze(1)
             else:
-                mask_slice = torch.empty(0)    
+                mask_slice = torch.empty(0) 
+                
             if(synthesis_mask != None): 
                 synthesis_slice = synthesis_mask[:,idx_slice:idx_slice+self.num_sorted_samples,:].permute(1, 0, 2)
                 if self.num_sorted_samples > 1:
@@ -188,7 +193,7 @@ class DatasetMRI2D(DatasetMRI):
         output["path_component_matrix"] = None 
         output["list_relevant_components"] = None
 
-        if procedure == "mask":
+        if procedure == "mask": 
             assert path_mask, "If procedure is mask, then path_mask is mandatory"  
             t1n_mask = self._get_mask(path_mask, path_t1n, path_segm)
             if (t1n_mask is None):

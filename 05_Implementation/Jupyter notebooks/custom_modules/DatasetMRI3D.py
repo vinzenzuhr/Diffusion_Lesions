@@ -18,14 +18,18 @@ class DatasetMRI3D(DatasetMRI):
             root_dir_synthesis: Path = None, 
             t1n_target_shape = None,  
             only_connected_masks: bool = False,
-            min_volume=400,):
+            min_volume=400,
+            dilation=0,
+            restrict_mask_to_wm=False):
         super().__init__(
             root_dir_img, 
             root_dir_segm, 
             root_dir_masks, 
             root_dir_synthesis, 
             t1n_target_shape,  
-            only_connected_masks)
+            only_connected_masks, 
+            dilation,
+            restrict_mask_to_wm)
         self.min_volume=min_volume
 
         idx_dict=0 
@@ -89,7 +93,7 @@ class DatasetMRI3D(DatasetMRI):
                         mask[component_matrix == components[rand_idx]] = 1
                 else: 
                     # if there is a segmentation restrict mask to white matter regions
-                    if(segm_path):
+                    if(segm_path and self.restrict_mask_to_wm):
                         binary_white_matter_segm = self._get_binary_segm(t1n_segm) 
                         mask = binary_white_matter_segm * mask  
             else:
