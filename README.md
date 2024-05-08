@@ -3,3 +3,5 @@ Multiple sclerosis lesions are the result of demyelination: They appear as dark 
 
 ## Aim
 Denoising diffusion networks are the current gold standard in MRI image generation: We aim to leverage this technology to remove and add lesions to existing MRI images. This will allow us to create realistic synthetic MRI images for training and validating MS lesion segmentation algorithms, and for investigating the sensitivity of morphometry software to the presence of MS lesions at a variety of lesion load levels.
+
+![visuals](visuals.jpg)
