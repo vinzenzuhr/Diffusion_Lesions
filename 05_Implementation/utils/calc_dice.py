@@ -22,9 +22,9 @@ assert len(lesion_segm.keys()) == len(gt_lesion_segm.keys()) == len(wm_segm.keys
 lesions = []
 gt_lesions = []
 for key in lesion_segm.keys():
-    lesion = torch.from_numpy(nib.load(lesion_segm[key])).to(torch.int)
-    gt_lesion = torch.from_numpy(nib.load(gt_lesion_segm[key])).to(torch.int)
-    wm = torch.from_numpy(nib.load(wm_segm[key])).to(torch.int)
+    lesion = torch.from_numpy(nib.load(lesion_segm[key]).get_fdata()).to(torch.int)
+    gt_lesion = torch.from_numpy(nib.load(gt_lesion_segm[key]).get_fdata()).to(torch.int)
+    wm = torch.from_numpy(nib.load(wm_segm[key]).get_fdata()).to(torch.int)
     binary_wm = torch.logical_or(wm==41, wm==2)
     gt_lesion = binary_wm * gt_lesion
  
