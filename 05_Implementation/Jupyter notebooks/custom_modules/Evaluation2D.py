@@ -1,29 +1,19 @@
 #setup evaluation
 
-from custom_modules import EvaluationUtils
-
-
-from abc import ABC, abstractmethod
-from diffusers.utils import make_image_grid
-import numpy as np
+from custom_modules import EvaluationUtils 
+from abc import ABC, abstractmethod 
 import os
-from pathlib import Path
-import torch.nn.functional as F
-import PIL 
-import random
-import math
-from skimage.metrics import structural_similarity, mean_squared_error
-import torch 
-from torcheval.metrics import PeakSignalNoiseRatio
-from torchvision.ops import masks_to_boxes
+import torch.nn.functional as F 
+import torch  
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 from torchvision.transforms.functional import to_pil_image
 from tqdm.auto import tqdm
 
 class Evaluation2D(ABC):
-    def __init__(self, config, dataloader, tb_summary, accelerator):
+    def __init__(self, config, eval_dataloader, train_dataloader, tb_summary, accelerator):
         self.config = config 
-        self.dataloader = dataloader
+        self.eval_dataloader = eval_dataloader 
+        self.train_dataloader = train_dataloader
         self.tb_summary = tb_summary
         self.accelerator = accelerator 
         self.lpips_metric = LearnedPerceptualImagePatchSimilarity(net_type='alex').to(self.accelerator.device)
@@ -57,47 +47,69 @@ class Evaluation2D(ABC):
     #    random.seed(seed)
     #    return
 
-    def _save_image(self, images: list[list[PIL.Image]], titles: list[str], path: Path, global_step: int):
-        os.makedirs(path, exist_ok=True)
-        for image_list, title in zip(images, titles):             
-            if len(image_list) > 4:
-                ValueError("Number of images in list must be less than 4")
-            missing_num = 4-len(image_list)
-            for _ in range(missing_num):
-                image_list.append(PIL.Image.new("L", self.config.unet_img_shape, 0))
-            image_grid = make_image_grid(image_list, rows=2, cols=2)
-            image_grid.save(f"{path}/{title}_{global_step:07d}.png")
-        print("image saved") 
-
     @abstractmethod
     def _start_pipeline(self, pipeline, batch, generator, parameters):
         pass
 
-    def evaluate(self, pipeline, global_step, _get_training_input, parameters={}):
+    def evaluate(self, pipeline, global_step, _get_training_input, parameters={}, deactivate_save_model=False):
         #initialize metrics
         metrics = dict()
         metric_list = ["ssim_full", "ssim_out", "ssim_in", "mse_full", "mse_out", "mse_in", "psnr_full", "psnr_out", "psnr_in", "val_loss", "lpips"] 
+        for t in self.config.eval_loss_timesteps:
+            metric_list.append(f"val_loss_{t}")
+            metric_list.append(f"train_loss_{t}")
         for metric in metric_list:
             metrics[metric] = 0 
+
+
+        eval_generator = torch.Generator(device=self.accelerator.device).manual_seed(self.config.seed)
+            
+        # calc t specific training loss
+        timesteps = torch.tensor(self.config.eval_loss_timesteps, dtype=torch.int, device=self.accelerator.device)
+        max_iter = len(self.eval_dataloader) if self.config.evaluate_num_batches == -1 else self.config.evaluate_num_batches
+        for n_iter, batch_train in enumerate(self.train_dataloader):
+            if n_iter >= max_iter:
+                break    
+            input, noise, timesteps = _get_training_input(batch_train, generator=eval_generator, timesteps=timesteps)
+            noise_pred = pipeline.unet(input, timesteps, return_dict=False)[0]
+            for i, t in enumerate(timesteps):
+                loss = F.mse_loss(noise_pred[i], noise[i])
+                all_loss = self.accelerator.gather_for_metrics(loss).mean() 
+                metrics[f"train_loss_{t}"] += all_loss
+            #free up memory
+            del input, noise, timesteps, noise_pred, loss, all_loss
+
          
-        self.progress_bar = tqdm(total=len(self.dataloader) if self.config.evaluate_num_batches == -1 else self.config.evaluate_num_batches, disable=not self.accelerator.is_local_main_process) 
+        self.progress_bar = tqdm(total=len(self.eval_dataloader) if self.config.evaluate_num_batches == -1 else self.config.evaluate_num_batches, disable=not self.accelerator.is_local_main_process) 
         self.progress_bar.set_description(f"Evaluation 2D")  
         #self._reset_seed(self.config.seed)
-        if hasattr(self.dataloader._index_sampler, "sampler"):
-            self.dataloader._index_sampler.sampler.generator.manual_seed(self.config.seed)
+        if hasattr(self.eval_dataloader._index_sampler, "sampler"):
+            self.eval_dataloader._index_sampler.sampler.generator.manual_seed(self.config.seed)
         else:
-            self.dataloader._index_sampler.batch_sampler.sampler.generator.manual_seed(self.config.seed)
+            self.eval_dataloader._index_sampler.batch_sampler.sampler.generator.manual_seed(self.config.seed)
         
-        eval_generator = torch.Generator(device=self.accelerator.device).manual_seed(self.config.seed)
-        for n_iter, batch in enumerate(self.dataloader):
+        for n_iter, batch in enumerate(self.eval_dataloader):
             # calc validation loss
+            timesteps = torch.tensor(self.config.eval_loss_timesteps, dtype=torch.int, device=self.accelerator.device)
             input, noise, timesteps = _get_training_input(batch, generator=eval_generator)
             noise_pred = pipeline.unet(input, timesteps, return_dict=False)[0]
-            loss = F.mse_loss(noise_pred, noise)          
+            loss = F.mse_loss(noise_pred, noise)
             all_loss = self.accelerator.gather_for_metrics(loss).mean() 
             metrics["val_loss"] += all_loss 
             #free up memory
+            del input, noise, timesteps, noise_pred, loss, all_loss
+
+            # calc t specific validation loss
+            input, noise, timesteps = _get_training_input(batch, generator=eval_generator, timesteps=timesteps)
+            noise_pred = pipeline.unet(input, timesteps, return_dict=False)[0]
+            for i, t in enumerate(timesteps):
+                loss = F.mse_loss(noise_pred[i], noise[i])
+                all_loss = self.accelerator.gather_for_metrics(loss).mean() 
+                metrics[f"val_loss_{t}"] += all_loss 
+            #free up memory
             del input, noise, timesteps, noise_pred, loss, all_loss 
+
+
             torch.cuda.empty_cache() 
             # run pipeline. The returned masks can be either existing lesions or the synthetic ones
             images, clean_images, masks = self._start_pipeline(
@@ -127,7 +139,7 @@ class Evaluation2D(ABC):
         # calculate average metrics
         for key, value in metrics.items():
             if self.config.evaluate_num_batches == -1:
-                metrics[key] /= len(self.dataloader)
+                metrics[key] /= len(self.eval_dataloader)
             else:
                 metrics[key] /= self.config.evaluate_num_batches
 
@@ -138,10 +150,10 @@ class Evaluation2D(ABC):
             # save last batch as sample images
             list, title_list = self._get_image_lists(images, clean_images, masks, batch)
             image_list = [[to_pil_image(x, mode="L") for x in images] for images in list]
-            self._save_image(image_list, title_list, os.path.join(self.config.output_dir, "samples_2D"), global_step)
+            EvaluationUtils.save_image(image_list, title_list, os.path.join(self.config.output_dir, "samples_2D"), global_step, self.config.unet_img_shape)
 
             # save model
-            if self.best_val_loss > metrics["val_loss"]:
-                self.best_val_loss = metrics["val_loss"]
+            if not deactivate_save_model:# and (self.best_val_loss > metrics["val_loss"]):
+                #self.best_val_loss = metrics["val_loss"]
                 pipeline.save_pretrained(self.config.output_dir)
                 print("model saved")

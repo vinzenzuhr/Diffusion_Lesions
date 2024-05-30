@@ -1,11 +1,10 @@
 from custom_modules import Evaluation2D
-
 import torch
 import numpy as np 
 
 class Evaluation2DFilling(Evaluation2D):
-    def __init__(self, config, dataloader, tb_summary, accelerator):
-        super().__init__(config, dataloader, tb_summary, accelerator) 
+    def __init__(self, config, eval_dataloader, train_dataloader, tb_summary, accelerator):
+        super().__init__(config, eval_dataloader, train_dataloader, tb_summary, accelerator) 
     
     def _get_image_lists(self, images, clean_images, masks, batch):
         # save last batch as sample images

@@ -46,6 +46,8 @@ class Evaluation3DFilling(Evaluation3D):
 
         #modify all slices
         images = [] 
+        # seed per 3D image
+        generator = torch.Generator(device=self.accelerator.device).manual_seed(self.config.seed)
         for chunk in chunks:
             chunk_images = chunk[0]
             chunk_masks = chunk[1]
@@ -55,6 +57,7 @@ class Evaluation3DFilling(Evaluation3D):
                 chunk_voided_images,
                 chunk_masks,
                 num_inference_steps = self.config.num_inference_steps,
+                generator=generator,
                 **parameters
             ).images
             #new_images = torch.from_numpy(new_images).to(clean_images.device) 

@@ -1,36 +1,21 @@
-from custom_modules import Evaluation2D
+from custom_modules import Evaluation2D, EvaluationUtils
 
 import torch
 import numpy as np
 import matplotlib.pyplot as plt 
 
 class Evaluation2DSynthesis(Evaluation2D):
-    def __init__(self, config, dataloader, tb_summary, accelerator):
-        super().__init__(config, dataloader, tb_summary, accelerator)
+    def __init__(self, config, eval_dataloader, train_dataloader, tb_summary, accelerator):
+        super().__init__(config, eval_dataloader, train_dataloader, tb_summary, accelerator)
 
     def _add_coarse_lesions(self, clean_images, batch):
         synthesis_masks = batch["synthesis"] 
         masks = batch["mask"].to(torch.bool) 
-        if self.config.add_lesion_technique == "mean_intensity":
-            lesion_intensity = -0.5492 
-        elif self.config.add_lesion_technique == "other_lesions_1stQuantile":
-            # use first quantile of lesion intensity as new lesion intensity
-            lesion_intensity = clean_images[masks].quantile(0.25)
-            print("1st quantile lesion intensity: ", lesion_intensity)
-        elif self.config.add_lesion_technique == "other_lesions_mean":
-            # use mean of lesion intensity as new lesion intensity
-            lesion_intensity = clean_images[masks].mean()
-            print("mean lesion intensity: ", lesion_intensity)
-        elif self.config.add_lesion_technique == "other_lesions_median":
-            # use mean of lesion intensity as new lesion intensity
-            lesion_intensity = clean_images[masks].median()
-            print("median lesion intensity: ", lesion_intensity)
-        elif self.config.add_lesion_technique == "other_lesions_3rdQuantile":
-            # use 3rd quantile of lesion intensity as new lesion intensity
-            lesion_intensity = clean_images[masks].quantile(0.75)
-            print("3rd quantile lesion intensity: ", lesion_intensity)
-        else:
-            raise ValueError("config.add_lesion_technique must be either 'mean_intensity' or 'other_lesions'")
+        lesion_intensity = EvaluationUtils.get_lesion_technique(
+            self.config.add_lesion_technique, 
+            clean_images[masks], 
+            self.config.add_lesion_mean_intensity)
+        
         images_with_lesions = clean_images.clone()
         images_with_lesions[synthesis_masks.to(torch.bool)] = lesion_intensity 
         return images_with_lesions, synthesis_masks

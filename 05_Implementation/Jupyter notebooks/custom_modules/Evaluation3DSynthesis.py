@@ -1,8 +1,9 @@
-from custom_modules import Evaluation3D, DatasetMRI
+from custom_modules import Evaluation3D, DatasetMRI, EvaluationUtils 
 
 import torch
 import numpy as np
 import math
+
 
 class Evaluation3DSynthesis(Evaluation3D):
     def __init__(self, config, dataloader, tb_summary, accelerator):
@@ -12,26 +13,12 @@ class Evaluation3DSynthesis(Evaluation3D):
         clean_images = batch["gt_image"][sample_idx] #torch.Size([1, 256, 256, 256])
         synthesis_masks = batch["synthesis"][sample_idx]  #torch.Size([1, 256, 256, 256])
         masks = batch["mask"][sample_idx].to(torch.bool)  #torch.Size([1, 256, 256, 256])
-        if self.config.add_lesion_technique == "mean_intensity":
-            lesion_intensity = -0.5492 
-        elif self.config.add_lesion_technique == "other_lesions_1stQuantile":
-            # use first quantile of lesion intensity as new lesion intensity
-            lesion_intensity = clean_images[masks].quantile(0.25)
-            print("1st quantile lesion intensity: ", lesion_intensity)
-        elif self.config.add_lesion_technique == "other_lesions_mean":
-            # use mean of lesion intensity as new lesion intensity
-            lesion_intensity = clean_images[masks].mean()
-            print("mean lesion intensity: ", lesion_intensity)
-        elif self.config.add_lesion_technique == "other_lesions_median":
-            # use mean of lesion intensity as new lesion intensity
-            lesion_intensity = clean_images[masks].median()
-            print("median lesion intensity: ", lesion_intensity)
-        elif self.config.add_lesion_technique == "other_lesions_3rdQuantile":
-            # use 3rd quantile of lesion intensity as new lesion intensity
-            lesion_intensity = clean_images[masks].quantile(0.75)
-            print("3rd quantile lesion intensity: ", lesion_intensity)
-        else:
-            raise ValueError("config.add_lesion_technique must be either 'mean_intensity' or 'other_lesions'")
+        lesion_intensity = EvaluationUtils.get_lesion_technique(
+            self.config.add_lesion_technique, 
+            clean_images[masks], 
+            self.config.add_lesion_mean_intensity)
+
+
 
         #add new lesions with mean intensity value from existing lesions 
         images_with_lesions = clean_images.clone()
@@ -58,14 +45,17 @@ class Evaluation3DSynthesis(Evaluation3D):
         #modify all slices
         images = [] 
         for chunk in chunks: 
+            #seed per chunk 
             chunk_images = chunk[0]
-            chunk_masks = chunk[1]
+            chunk_masks = chunk[1] 
 
+            # use the same generator for every picture to create a more homogeneous output
             new_images = pipeline(
                 chunk_images,
                 chunk_masks,
                 timestep=self.config.intermediate_timestep,
                 num_inference_steps = self.config.num_inference_steps,
+                generator=[torch.Generator(device=self.accelerator.device).manual_seed(self.config.seed) for _ in range(chunk_images.shape[0])],
                 **parameters
             ).images
             #new_images = torch.from_numpy(new_images).to(clean_images.device) 
