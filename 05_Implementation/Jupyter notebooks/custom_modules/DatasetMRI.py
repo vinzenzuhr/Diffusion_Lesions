@@ -62,7 +62,7 @@ class DatasetMRI(Dataset):
 
         self.list_paths_segm = list(root_dir_segm.rglob("*.nii.gz")) if root_dir_segm else None 
         self.list_paths_synthesis = list(root_dir_synthesis.rglob("*.nii.gz")) if root_dir_synthesis else None 
-        self.list_paths_t1n = list(root_dir_img.rglob("*.nii.gz")) 
+        self.list_paths_t1n = list(root_dir_img.rglob("*.nii.gz"))  
         self.idx_to_element = dict() 
         self.only_connected_masks = only_connected_masks
         self.t1n_target_shape = t1n_target_shape
@@ -97,43 +97,7 @@ class DatasetMRI(Dataset):
         Returns:
             component_matrix (torch.Tensor): Matrix containing the connected components
             n (int): Number of connected components
-        """
-
-
-        """
-        component_matrix, n = label(t1n_mask)
-        component_matrix = torch.tensor(component_matrix)
-        #torch.save(component_matrix, path_component_matrix)
-        
-        idx_slice=143
-        #print("idx_slice ", idx_slice)
-        #print("relevant_components ", relevant_components)
-        #print("component_matrix[:,idx_slice,:].max() ", component_matrix[:,idx_slice,:].max())
-        import matplotlib.pyplot as plt
-
-        
-        
-        print("path_component_matrix ", path_component_matrix)
-
-        print("t1n mask")
-        print(t1n_mask.shape) 
-        print("t1n min ", t1n_mask.min())
-        print("t1n max ", t1n_mask.max())
-        plt.clf()
-        plt.imshow(t1n_mask[:,idx_slice,:].squeeze())
-        plt.show()
-        print("dazugehörige component matrix")
-        print(component_matrix.shape)
-        plt.clf()
-        plt.imshow(component_matrix[:,idx_slice,:].squeeze())
-        plt.show()
-        print("dazugehörige test") 
-        plt.clf()
-        plt.imshow(torch.logical_and(t1n_mask != 0, t1n_mask != 1).squeeze()[:,idx_slice,:])
-        plt.show()
-        #plt.imshow(component_matrix[:,idx_slice,:] == relevant_components[0])
-        """
-        
+        """        
 
         # extract connected components from mask or load them if they are already exist
         if os.path.isfile(path_component_matrix):
@@ -250,7 +214,9 @@ class DatasetMRI(Dataset):
             kernel.unsqueeze(0).unsqueeze(0), 
             padding='same'
             )*binary_segm.unsqueeze(0).unsqueeze(0)
+        dilated_mask[dilated_mask>0]=1.
         
+        #prevent shrinking of mask
         dilated_mask[mask.unsqueeze(0).unsqueeze(0).to(torch.bool)]=1.
         
         return dilated_mask.squeeze()
