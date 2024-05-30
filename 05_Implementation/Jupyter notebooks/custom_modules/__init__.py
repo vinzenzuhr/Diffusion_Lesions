@@ -24,13 +24,6 @@ from .Evaluation3DSynthesis import Evaluation3DSynthesis
 
 from .GuidedRePaintPipeline import GuidedRePaintPipeline
 
-from .PipelineFactories import (
-    get_ddim_guided_pipeline,
-    get_ddim_inpaint_pipeline,
-    get_repaint_pipeline,
-    get_guided_repaint_pipeline
-)
-
 from .pseudo3D import UNet2DModel
 
 from .RePaintPipeline import RePaintPipeline
@@ -42,3 +35,10 @@ from .TrainingConditional import TrainingConditional
 from .TrainingUnconditional import TrainingUnconditional
 
 from .transform_utils import ScaleDecorator
+
+from .PipelineFactories import (
+    get_ddim_guided_pipeline,
+    get_ddim_inpaint_pipeline,
+    get_repaint_pipeline,
+    get_guided_repaint_pipeline
+)
