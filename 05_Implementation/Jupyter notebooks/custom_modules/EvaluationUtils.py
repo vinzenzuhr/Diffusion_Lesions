@@ -1,6 +1,9 @@
 import torch
 from skimage.metrics import structural_similarity
 import os
+import PIL 
+from diffusers.utils import make_image_grid
+from pathlib import Path
  
 def calc_metrics(images1, images2, masks):
     batch_size = images1.shape[0]
@@ -74,3 +77,42 @@ def log_metrics(tb_summary, global_step, metrics, config):
                 f.write(f"{key}:{value},")
             f.write(f"global_step:{global_step}")
             f.write("\n")
+
+def get_lesion_technique(add_lesion_technique, image_lesions, lesion_intensity = None):
+    if add_lesion_technique == "mean_intensity":
+        return lesion_intensity
+    elif add_lesion_technique == "other_lesions_1stQuantile":
+        # use first quantile of lesion intensity as new lesion intensity
+        lesion_intensity = image_lesions.quantile(0.25)
+        print("1st quantile lesion intensity: ", lesion_intensity)
+    elif add_lesion_technique == "other_lesions_mean":
+        # use mean of lesion intensity as new lesion intensity
+        lesion_intensity = image_lesions.mean()
+        print("mean lesion intensity: ", lesion_intensity)
+    elif add_lesion_technique == "other_lesions_median":
+        # use mean of lesion intensity as new lesion intensity
+        lesion_intensity = image_lesions.median()
+        print("median lesion intensity: ", lesion_intensity)
+    elif add_lesion_technique == "other_lesions_3rdQuantile":
+        # use 3rd quantile of lesion intensity as new lesion intensity
+        lesion_intensity = image_lesions.quantile(0.75)
+        print("3rd quantile lesion intensity: ", lesion_intensity)
+    elif add_lesion_technique == "other_lesions_99Quantile":
+        lesion_intensity = image_lesions.quantile(0.99)
+        print("0.99 quantile lesion intensity: ", lesion_intensity)
+    else:
+        raise ValueError("add_lesion_technique unknown")
+    
+    return lesion_intensity
+
+def save_image(images: list[list[PIL.Image]], titles: list[str], path: Path, global_step: int, img_shape: tuple[int, int]):
+    os.makedirs(path, exist_ok=True)
+    for image_list, title in zip(images, titles):             
+        if len(image_list) > 4:
+            ValueError("Number of images in list must be less than 4")
+        missing_num = 4-len(image_list)
+        for _ in range(missing_num):
+            image_list.append(PIL.Image.new("L", img_shape, 0))
+        image_grid = make_image_grid(image_list, rows=2, cols=2)
+        image_grid.save(f"{path}/{title}_{global_step:07d}.png")
+    print("image saved")
