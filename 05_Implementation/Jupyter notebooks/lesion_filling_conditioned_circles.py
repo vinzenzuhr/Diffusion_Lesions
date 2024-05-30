@@ -9,9 +9,9 @@ from dataclasses import dataclass
 
 @dataclass
 class TrainingConfig: 
-    t1n_target_shape = None # will transform t1n during preprocessing (computationally expensive)
+    t1n_target_shape = None # will transform t1n during preprocessing (computationally expensive) 
     unet_img_shape = (256,256)
-    channels = 1 
+    channels = 1
     train_batch_size = 4
     eval_batch_size = 4
     num_sorted_samples = 1
@@ -21,10 +21,9 @@ class TrainingConfig:
     lr_warmup_steps = 100 #500
     evaluate_epochs = 14 #30
     deactivate3Devaluation = True
-    evaluate_num_batches = 30 # one batch needs ~15s. 
+    evaluate_num_batches = 2 # one batch needs ~15s. 
     evaluate_num_batches_3d = -1  
-    evaluate_3D_epochs = 1000  # one 3D evaluation needs ~20min
-    save_model_epochs = 150 # 300
+    evaluate_3D_epochs = 1000  # one 3D evaluation needs ~20min 
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
     output_dir = "lesion-filling-256-cond-circle"  # the model name locally and on the HF Hub
     dataset_train_path = "./datasets/filling/dataset_train/imgs"
@@ -262,7 +261,7 @@ args = {
 trainingCircles = TrainingConditional(**args)
 
 
-# In[ ]:
+# In[14]:
 
 
 if config.mode == "train":
@@ -273,6 +272,7 @@ if config.mode == "train":
 
 
 if config.mode == "eval":
+    trainingCircles.config.deactivate3Devaluation = False
     pipeline = DDIMInpaintPipeline.from_pretrained(config.output_dir) 
     trainingCircles.evaluate(pipeline)
 

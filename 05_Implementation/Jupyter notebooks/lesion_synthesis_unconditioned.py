@@ -1,14 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
-
-
-import sys
-sys.path.insert(1, './custom_modules')
-
-
-# In[2]:
+# In[4]:
 
 
 #### create config
@@ -21,17 +14,17 @@ class TrainingConfig:
     channels = 1
     train_batch_size = 4 
     eval_batch_size = 4  
-    num_samples_per_batch = 1
-    num_epochs = 170
+    num_sorted_samples = 1
+    num_dataloader_workers = 8
+    num_epochs = 192
     gradient_accumulation_steps = 1
     learning_rate = 1e-4
     lr_warmup_steps = 500
     evaluate_epochs = 5 # adjust to num_epochs
     evaluate_num_batches = -1 # ~3s/batch. 2.5 min/Evaluation 3D epoch with all batchesr
     evaluate_num_batches_3d = -1 
-    deactivate3Devaluation = False
-    evaluate_3D_epochs = 1000  # 3 min/Evaluation 3D
-    save_model_epochs = 100
+    deactivate3Devaluation = True
+    evaluate_3D_epochs = 1000  # 3 min/Evaluation 3D 
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
     output_dir = "lesion-synthesis-256-unconditioned"  # the model name locally and on the HF Hub
     dataset_train_path = "./datasets/synthesis/dataset_train/imgs"
@@ -44,10 +37,13 @@ class TrainingConfig:
     eval_only_connected_masks=False 
     num_inference_steps=50
     log_csv = True
-    add_lesion_technique = "other_lesions_median" # 'mean_intensity', 'other_lesions_1stQuantile', 'other_lesions_mean', 'other_lesions_median', or 'other_lesions_3rdQuantile',
+    add_lesion_technique = "other_lesions_median" # 'mean_intensity', 'other_lesions_1stQuantile', 'other_lesions_mean', 'other_lesions_median', 'other_lesions_3rdQuantile', 'other_lesions_99Quantile'
+    add_lesion_mean_intensity = -0.5492 
     intermediate_timestep = 3 # starting from this timesteps. num_inference_steps means the whole pipeline and 1 the last step. 
-    mode = "train" # 'train', 'eval' or "tuning_timestep"
-    debug = True 
+    mode = "tuning_parameters" # 'train', 'eval' or "tuning_parameters"
+    debug = False     
+    jump_length=intermediate_timestep
+    jump_n_sample=3
     brightness_augmentation = False
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub 
@@ -55,7 +51,7 @@ class TrainingConfig:
 config = TrainingConfig()
 
 
-# In[3]:
+# In[2]:
 
 
 if config.debug:
@@ -70,9 +66,10 @@ if config.debug:
     config.dataset_train_path = "./datasets/synthesis/dataset_eval/imgs"
     config.segm_train_path = "./datasets/synthesis/dataset_eval/segm"
     config.masks_train_path = "./datasets/synthesis/dataset_eval/masks" 
+    config.num_dataloader_workers = 1
 
 
-# In[4]:
+# In[3]:
 
 
 #setup huggingface accelerate
@@ -82,14 +79,12 @@ import accelerate
 accelerate.commands.config.default.write_basic_config(config.mixed_precision)
 
 
-# In[5]:
+# In[4]:
 
 
-from DatasetMRI2D import DatasetMRI2D
-from DatasetMRI3D import DatasetMRI3D
+from custom_modules import DatasetMRI2D, DatasetMRI3D, ScaleDecorator
 from pathlib import Path
-from torchvision import transforms
-from transform_utils import ScaleDecorator 
+from torchvision import transforms 
 
 #add augmentation
 transformations = None
@@ -109,23 +104,31 @@ dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), 
 
 from pathlib import Path
 import nibabel as nib
-from tqdm.auto import tqdm
-from DatasetMRI3D import DatasetMRI3D 
+from tqdm.auto import tqdm 
+from custom_modules import DatasetMRI2D, DatasetMRI3D, ScaleDecorator
 
 #skip to speed up
 if False:
-    t1w_norm_noskull_list = list(Path("temp/unhealthy_DL+DiReCT_Segmentation").rglob("*T1w_norm_noskull.nii.gz"))
-    lesion_list = list(Path("temp/unhealthy_registered_lesions").rglob("*transformed_lesion.nii.gz"))
+    #t1w_norm_noskull_list = list(Path("temp/unhealthy_DL+DiReCT_Segmentation").rglob("*T1w_norm_noskull.nii.gz"))
+    #lesion_list = list(Path("temp/unhealthy_registered_lesions").rglob("*transformed_lesion.nii.gz"))
+    #t1w_norm_noskull_list = list(Path("datasets_full/unhealthy_flair").rglob("*3DFLAIR.nii.gz"))
+    #lesion_list = list(Path("datasets_full/unhealthy_flair_masks").rglob("*Consensus.nii.gz"))
+
+    dataset_eval_path="datasets_full/unhealthy_flair"
+    masks_eval_path="datasets_full/unhealthy_flair_masks"
+    
+    dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(dataset_eval_path), root_dir_masks=Path(masks_eval_path), root_dir_synthesis=Path(masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape)
     
     t1ws = list()
     lesions = list()
-    for i in tqdm(range(len(t1w_norm_noskull_list))):
-        t1w = nib.load(t1w_norm_noskull_list[i])
-        t1w = t1w.get_fdata()
-        t1w, _ = DatasetMRI3D.preprocess(t1w)
-        lesion = nib.load(lesion_list[i])
-        lesion = lesion.get_fdata()
-        lesion = DatasetMRI3D._padding(torch.from_numpy(lesion).to(torch.uint8))
+    for i in tqdm(range(len(dataset3DEvaluation))):
+        t1w = dataset3DEvaluation[i]["gt_image"]
+        lesion = dataset3DEvaluation[i]["mask"]
+        
+        #t1w = t1w.get_fdata()
+        #t1w, _, lesion, _, _ = DatasetMRI3D.preprocess(t1w, masks=lesion)
+        #lesion = lesion.get_fdata()
+        #lesion = DatasetMRI3D._padding(torch.from_numpy(lesion).to(torch.uint8))
         #means.append(t1w[lesion.to(torch.bool)].mean())
         #stds.append(t1w[lesion.to(torch.bool)].std())
         t1ws.append(t1w)
@@ -137,8 +140,10 @@ if False:
     print("std lesion intensity: ", t1w_big[lesion_big.to(torch.bool)].std()) # 0.1829
     print("median lesion intensity: ", t1w_big[lesion_big.to(torch.bool)].median()) # 0.1829
 
+ 
 
-# In[7]:
+
+# In[6]:
 
 
 import matplotlib.pyplot as plt 
@@ -165,7 +170,7 @@ if False:
 
 # ### Playground LPIPS
 
-# In[8]:
+# In[7]:
 
 
 #skip to speed up
@@ -185,7 +190,7 @@ if False:
     print("Pips for three timestep: ", eval._calc_lpip(clean_image.unsqueeze(0), synthesized_images_2))
 
 
-# In[9]:
+# In[8]:
 
 
 #skip to speed up
@@ -201,7 +206,7 @@ if False:
     axis[3].set_title("Diffusion with three timestep")
 
 
-# In[10]:
+# In[9]:
 
 
 #skip to speed up
@@ -217,7 +222,7 @@ if False:
 
 # ### Training
 
-# In[11]:
+# In[10]:
 
 
 #create model
@@ -250,7 +255,7 @@ model = UNet2DModel(
 config.model = "UNet2DModel"
 
 
-# In[12]:
+# In[11]:
 
 
 #setup noise scheduler
@@ -263,7 +268,7 @@ noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
 config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
 
 
-# In[13]:
+# In[12]:
 
 
 # setup lr scheduler
@@ -279,14 +284,11 @@ lr_scheduler = get_cosine_schedule_with_warmup(
 config.lr_scheduler = "cosine_schedule_with_warmup"
 
 
-# In[ ]:
+# In[13]:
 
 
-from TrainingUnconditional import TrainingUnconditional
-from GuidedRePaintPipeline import GuidedRePaintPipeline
-from Evaluation2DSynthesis import Evaluation2DSynthesis
-from Evaluation3DSynthesis import Evaluation3DSynthesis 
-import PipelineFactories
+from custom_modules import TrainingUnconditional, GuidedRePaintPipeline, Evaluation2DSynthesis, Evaluation3DSynthesis, DDIMGuidedPipeline
+from custom_modules import PipelineFactories
 
 config.conditional_data = "None"
 
@@ -301,7 +303,7 @@ args = {
     "dataset3DEvaluation": dataset3DEvaluation, 
     "evaluation2D": Evaluation2DSynthesis,
     "evaluation3D": Evaluation3DSynthesis, 
-    "pipelineFactory": PipelineFactories.get_guided_repaint_pipeline, 
+    "pipelineFactory": PipelineFactories.get_ddim_guided_pipeline, 
     "deactivate3Devaluation": config.deactivate3Devaluation} 
 trainingSynthesis = TrainingUnconditional(**args)
 
@@ -317,8 +319,9 @@ if config.mode == "train":
 
 
 if config.mode == "eval":
+    trainingSynthesis.config.deactivate3Devaluation = False
     pipeline = GuidedRePaintPipeline.from_pretrained(config.output_dir) 
-    trainingSynthesis.evaluate(pipeline)
+    trainingSynthesis.evaluate(pipeline, deactivate_save_model=True)
 
 
 # In[ ]:
@@ -326,39 +329,20 @@ if config.mode == "eval":
 
 import os
 import csv
+from itertools import product
 
-if config.mode == "tuning_timestep":
-    pipeline = GuidedRePaintPipeline.from_pretrained(config.output_dir)
+if config.mode == "tuning_parameters":
+    trainingSynthesis.config.deactivate3Devaluation = False
+    pipeline = DDIMGuidedPipeline.from_pretrained(config.output_dir)
     original_output_dir = config.output_dir 
-    timesteps = [1, 2, 3, 4, 5, 7, 9, 12, 15, 20]
-    for t in timesteps:
-        print("Begin evaluation for timestep ", t)
-        trainingSynthesis.config.intermediate_timestep = t
-        trainingSynthesis.config.output_dir = original_output_dir + "/tuning_timestep/timestep_" + str(t)
+    timesteps = [30, 40, 45, 48, 50]
+    
+    for timestep in timesteps: 
+        trainingSynthesis.config.intermediate_timestep = timestep 
+        trainingSynthesis.config.output_dir = original_output_dir + "/tuning_parameters/timestep_" + str(timestep)
         if trainingSynthesis.accelerator.is_main_process:
             os.makedirs(config.output_dir, exist_ok=True)
             trainingSynthesis.log_meta_logs()
-        trainingSynthesis.evaluate(pipeline) 
-
-    # plot lpips score vs timesteps
-    original_output_dir = config.output_dir
-    folder_list = list(Path().glob("lesion-synthesis-256-unconditioned_*"))
-    lpips_timesteps = []
-    for folder in folder_list:
-        timestep = str(folder).split("_")[-1] 
-        with open(folder / "metrics.csv", 'r') as fp: 
-            _ = fp.readline()
-            csv_metrics = fp.readline()  
-            reader = csv_metrics.split(',')
-            lpips = None 
-            for metric in reader:  
-                name, value = metric.split(':')
-                if name == "lpips":
-                    lpips_timesteps.append((int(timestep), float(value))) 
-    plt.cfg()
-    for timestep, lpips in lpips_timesteps: 
-        plt.scatter(timestep, lpips)
-    plt.savefig(config.output_dir + '/lpips_timesteps.png')
-
+        trainingSynthesis.evaluate(pipeline, deactivate_save_model=True) 
 
 # In[ ]:
