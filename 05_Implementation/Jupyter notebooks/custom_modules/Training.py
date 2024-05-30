@@ -45,9 +45,9 @@ class Training(ABC):
             #kwargs_handlers=[InitProcessGroupKwargs(timeout=timedelta(seconds=2 * 1800))],
         ) 
         
-        self.train_dataloader = get_dataloader(dataset = datasetTrain, batch_size = config.train_batch_size, random_sampler=True, seed=self.config.seed, multi_sample=multi_sample)
-        self.d2_eval_dataloader = get_dataloader(dataset = datasetEvaluation, batch_size = config.eval_batch_size, random_sampler=False, seed=self.config.seed, multi_sample=multi_sample)
-        self.d3_eval_dataloader = get_dataloader(dataset = dataset3DEvaluation, batch_size = 1, random_sampler=False, seed=self.config.seed, multi_sample=False)        
+        self.train_dataloader = get_dataloader(dataset = datasetTrain, batch_size = config.train_batch_size, num_workers=self.config.num_dataloader_workers ,random_sampler=True, seed=self.config.seed, multi_sample=multi_sample)
+        self.d2_eval_dataloader = get_dataloader(dataset = datasetEvaluation, batch_size = config.eval_batch_size, num_workers=self.config.num_dataloader_workers, random_sampler=False, seed=self.config.seed, multi_sample=multi_sample)
+        self.d3_eval_dataloader = get_dataloader(dataset = dataset3DEvaluation, batch_size = 1, num_workers=self.config.num_dataloader_workers, random_sampler=False, seed=self.config.seed, multi_sample=False)        
 
         if self.accelerator.is_main_process:
             #setup tensorboard
@@ -65,6 +65,7 @@ class Training(ABC):
         self.evaluation2D = evaluation2D(
             config,  
             self.d2_eval_dataloader, 
+            self.train_dataloader,
             None if not self.accelerator.is_main_process else self.tb_summary, 
             self.accelerator)
         self.evaluation3D = evaluation3D(
@@ -119,7 +120,9 @@ class Training(ABC):
             "eval_only_connected_masks",
             "debug",
             "brightness_augmentation",
-            "intermediate_timestep"] 
+            "intermediate_timestep",
+            "jump_n_sample",
+            "jump_length"] 
         texts = [
             "mixed_precision",
             "mode",
@@ -161,25 +164,28 @@ class Training(ABC):
     
     def _save_logs(self, loss, total_norm):
         
-        logs = {"loss": loss.cpu().detach().item(), "lr": self.lr_scheduler.get_last_lr()[0], "total_norm": total_norm, "step": self.global_step}
-        self.tb_summary.add_scalar("loss", logs["loss"], self.global_step)
+        logs = {"train_loss": loss.cpu().detach().item(), "lr": self.lr_scheduler.get_last_lr()[0], "step": self.global_step}
+        self.tb_summary.add_scalar("train_loss", logs["train_loss"], self.global_step)
         self.tb_summary.add_scalar("lr", logs["lr"], self.global_step)
-        self.tb_summary.add_scalar("total_norm", logs["total_norm"], self.global_step) 
+        if total_norm:
+            self.tb_summary.add_scalar("total_norm", total_norm, self.global_step) 
     
         self.progress_bar.set_postfix(**logs)
         #accelerator.log(logs, step=global_step)
 
-    def _get_noisy_images(self, clean_images, generator=None):
+    def _get_noisy_images(self, clean_images, generator=None, timesteps=None):
 
         # Sample noise to add to the images 
         noise = torch.randn(clean_images.shape, device=clean_images.device, generator=generator)
         bs = clean_images.shape[0]
 
         # Sample a random timestep for each image
-        timesteps = torch.randint(
-            0, self.noise_scheduler.config.num_train_timesteps, (bs,), device=clean_images.device,
-            dtype=torch.int64, generator=generator
-        )
+        if timesteps is None:
+            timesteps = torch.randint(
+                0, self.noise_scheduler.config.num_train_timesteps, (bs,), device=clean_images.device,
+                dtype=torch.int64, generator=generator
+            )
+        assert timesteps.shape[0] == bs 
 
         # Add noise to the voided images according to the noise magnitude at each timestep (forward diffusion process)
         noisy_images = self.noise_scheduler.add_noise(clean_images, noise, timesteps) 
@@ -187,7 +193,7 @@ class Training(ABC):
         return noisy_images, noise, timesteps
 
     @abstractmethod
-    def _get_training_input(self, batch, generator=None):
+    def _get_training_input(self, batch, generator=None, timesteps=None):
         pass
 
     @abstractmethod
@@ -201,21 +207,24 @@ class Training(ABC):
             self.model.train() 
             for batch in self.train_dataloader:
 
-                input, noise, timesteps = self._get_training_input(batch)                
+                input, noise, timesteps = self._get_training_input(batch)
                  
                 with self.accelerator.accumulate(self.model):
                     # Predict the noise residual
                     noise_pred = self.model(input, timesteps, return_dict=False)[0]
                     loss = F.mse_loss(noise_pred, noise)
                     self.accelerator.backward(loss)
-                    self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
+                    if self.accelerator.sync_gradients:
+                        total_norm = self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
+                    else:
+                        total_norm = None
         
                     #log gradient norm 
-                    parameters = [p for p in self.model.parameters() if p.grad is not None and p.requires_grad]
-                    if len(parameters) == 0:
-                        total_norm = 0.0
-                    else: 
-                        total_norm = torch.norm(torch.stack([torch.norm(p.grad.detach()).cpu() for p in parameters]), 2.0).item()
+                    #parameters = [p for p in self.model.parameters() if p.grad is not None and p.requires_grad]
+                    #if len(parameters) == 0:
+                    #    total_norm = 0.0
+                    #else: 
+                    #    total_norm = torch.norm(torch.stack([torch.norm(p.grad.detach()).cpu() for p in parameters]), 2.0).item()
 
                     #do learning step
                     self.optimizer.step()
@@ -232,5 +241,5 @@ class Training(ABC):
 
                 if self.config.debug:
                     break
-             
+            
             self.evaluate()
