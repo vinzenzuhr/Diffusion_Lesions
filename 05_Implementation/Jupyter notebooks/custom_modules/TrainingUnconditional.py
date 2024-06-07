@@ -40,12 +40,13 @@ class TrainingUnconditional(Training):
         
         # Evaluate 2D images
         if (self.epoch) % self.config.evaluate_epochs == 0 or self.epoch == self.config.num_epochs - 1: 
-            self.evaluation2D.evaluate(
-                pipeline, 
-                self.global_step, 
-                self._get_training_input,
-                parameters = self.evaluation_pipeline_parameters,
-                deactivate_save_model=deactivate_save_model)
+            if not self.config.deactivate2Devaluation:
+                self.evaluation2D.evaluate(
+                    pipeline, 
+                    self.global_step, 
+                    self._get_training_input,
+                    parameters = self.evaluation_pipeline_parameters,
+                    deactivate_save_model=deactivate_save_model)
             self._save_unconditional_img(pipeline)
         
         # Evaluate 3D images composed of 2D slices

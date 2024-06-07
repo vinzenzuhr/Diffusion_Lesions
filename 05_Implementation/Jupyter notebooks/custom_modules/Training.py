@@ -78,32 +78,6 @@ class Training(ABC):
 
         self.epoch = 0
         self.global_step = 0 
-    
-    def _get_random_masks(self, n, generator=None):
-        #create circular mask with random center around the center point of the pictures and a radius between 3 and 50 pixels
-        center=torch.normal(mean=torch.tensor(self.config.unet_img_shape, device=self.accelerator.device).expand(n,2)/2, std=30.0, generator=generator) # 30 is chosen by inspection
-        low=3
-        high=50
-        radius=torch.rand(n, generator=generator, device=self.accelerator.device)*(high-low)+low # get radius between 3 and 50 from uniform distribution 
-
-        #Test case
-        #center=torch.tensor([[0,255],[0,255]]) 
-        #radius=torch.tensor([2,2])
-        
-        Y, X = [torch.arange(self.config.unet_img_shape[0], device=self.accelerator.device)[:,None],torch.arange(self.config.unet_img_shape[1], device=self.accelerator.device)[None,:]] # gives two vectors, each containing the pixel locations. There's a column vector for the column indices and a row vector for the row indices.
-        dist_from_center = torch.sqrt((X.T - center[:,0])[None,:,:]**2 + (Y-center[:,1])[:,None,:]**2) # creates matrix with euclidean distance to center
-        dist_from_center = dist_from_center.permute(2,0,1) 
-
-        #Test case
-        #print(dist_from_center[0,0,0]) #=255
-        #print(dist_from_center[0,0,255]) #=360.624
-        #print(dist_from_center[0,255,0]) #=0
-        #print(dist_from_center[0,255,255]) #=255
-        #print(dist_from_center[0,127,127]) #=180.313 
-        
-        masks = dist_from_center < radius[:,None,None] # creates mask for pixels which are inside the radius. 
-        masks = masks[:,None,:,:].int() 
-        return masks
 
     def log_meta_logs(self):
         #log at tensorboard
@@ -122,17 +96,20 @@ class Training(ABC):
             "brightness_augmentation",
             "intermediate_timestep",
             "jump_n_sample",
-            "jump_length"] 
+            "jump_length",
+            "gradient_accumulation_steps",
+            "proportionTrainingCircularMasks",
+            ] 
         texts = [
             "mixed_precision",
             "mode",
             "model",
             "noise_scheduler",
-            "lr_scheduler",
-            "conditional_data",
+            "lr_scheduler", 
             "add_lesion_technique",
             "dataset_train_path",
-            "dataset_eval_path"] 
+            "dataset_eval_path",
+            ] 
 
         for scalar in scalars:
             if hasattr(self.config, scalar) and getattr(self.config, scalar) is not None:
@@ -151,9 +128,11 @@ class Training(ABC):
         if self.config.log_csv:
             with open(os.path.join(self.config.output_dir, "metrics.csv"), "w") as f:
                 for scalar in scalars:
-                    f.write(f"{scalar}:{getattr(self.config, scalar)},")
+                    if hasattr(self.config, scalar) and getattr(self.config, scalar) is not None:
+                        f.write(f"{scalar}:{getattr(self.config, scalar)},")
                 for text in texts:
-                    f.write(f"{text}:{getattr(self.config, text)},")
+                    if hasattr(self.config, text) and getattr(self.config, text) is not None:
+                        f.write(f"{text}:{getattr(self.config, text)},")
                 f.write(f"len(train_dataloader):{len(self.train_dataloader)},")
                 f.write(f"len(d2_eval_dataloader):{len(self.d2_eval_dataloader)},")
                 f.write(f"len(d3_eval_dataloader):{len(self.d3_eval_dataloader)}")
@@ -211,6 +190,7 @@ class Training(ABC):
                  
                 with self.accelerator.accumulate(self.model):
                     # Predict the noise residual
+                    
                     noise_pred = self.model(input, timesteps, return_dict=False)[0]
                     loss = F.mse_loss(noise_pred, noise)
                     self.accelerator.backward(loss)

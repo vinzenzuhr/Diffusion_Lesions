@@ -9,6 +9,7 @@ import torch
 from scipy.ndimage import label
 import os
 from tqdm.auto import tqdm
+import random
 
 class DatasetMRI2D(DatasetMRI):
     def __init__(
@@ -24,7 +25,11 @@ class DatasetMRI2D(DatasetMRI):
         random_sorted_samples=False,
         transforms=None,
         dilation=0,
-        restrict_mask_to_wm=False):
+        restrict_mask_to_wm=False,
+        proportionTrainingCircularMasks=0,
+        circleMaskShape = None,
+        default_to_circular_mask = False
+        ):
         # if num samples >1 the idx_to_element dict is sorted and has packages of num_samples slices which correspond next to each other
         # only transforms which doesn't change the mask or segmentation are allowed
 
@@ -42,6 +47,9 @@ class DatasetMRI2D(DatasetMRI):
         self.transforms = transforms
         self.min_area = min_area
         self.random_sorted_samples = random_sorted_samples
+        self.proportionTrainingCircularMasks = proportionTrainingCircularMasks
+        self.circleMaskShape = circleMaskShape
+        self.default_to_circular_mask = default_to_circular_mask
         
         if(root_dir_synthesis and not root_dir_masks):
             raise ValueError(f"If root_dir_masks_synthesis is given, then root_dir_masks is mandatory")
@@ -129,8 +137,13 @@ class DatasetMRI2D(DatasetMRI):
                 if self.num_sorted_samples > 1:
                     t1n_segm_slice = t1n_segm_slice.unsqueeze(1)
             else:
-                t1n_segm_slice = torch.empty(0)    
-            if(mask != None): 
+                t1n_segm_slice = torch.empty(0)
+             
+            if (self.proportionTrainingCircularMasks > random.random()) or (mask == None and self.default_to_circular_mask): 
+                mask_slice = self.get_random_circular_masks(n=1)
+                if self.num_sorted_samples > 1:
+                    t1n_segm_slice = t1n_segm_slice.unsqueeze(1)
+            elif(mask != None):  
                 if self.only_connected_masks: 
                     # create mask from random connected components
                     component_matrix = torch.load(component_matrix_path)
@@ -159,7 +172,7 @@ class DatasetMRI2D(DatasetMRI):
 
             # apply transforms
             if self.transforms:
-                t1n_slice = self.transforms(t1n_slice)
+                t1n_slice = self.transforms(t1n_slice) 
 
             # Output data
             sample_dict = {
@@ -263,4 +276,19 @@ class DatasetMRI2D(DatasetMRI):
             return output
         else:
             raise ValueError(f"Procedure {procedure} is not supported")
+        
+    def get_random_circular_masks(self, n, generator=None):
+        #create circular mask with random center around the center point of the pictures and a radius between 3 and 50 pixels
+        center=torch.normal(mean=torch.tensor(self.circleMaskShape).expand(n,2)/2, std=30.0, generator=generator) # 30 is chosen by inspection
+        low=3
+        high=50
+        radius=torch.rand(n, generator=generator)*(high-low)+low # get radius between 3 and 50 from uniform distribution 
+        
+        Y, X = [torch.arange(self.circleMaskShape[0])[:,None],torch.arange(self.circleMaskShape[1])[None,:]] # gives two vectors, each containing the pixel locations. There's a column vector for the column indices and a row vector for the row indices.
+        dist_from_center = torch.sqrt((X.T - center[:,0])[None,:,:]**2 + (Y-center[:,1])[:,None,:]**2) # creates matrix with euclidean distance to center
+        dist_from_center = dist_from_center.permute(2,0,1) 
+        
+        masks = dist_from_center < radius[:,None,None] # creates mask for pixels which are inside the radius. 
+        masks = masks.int() #masks[:,None,:,:].int() 
+        return masks
 

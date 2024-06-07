@@ -1,22 +1,17 @@
 #import custom modules 
 from custom_modules import Training
 
-# import other modules
+# import other modules 
 import torch
 
 class TrainingConditional(Training):
-    def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, trainingCircularMasks, evaluation2D, evaluation3D, pipelineFactory, multi_sample=False):
+    def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory, multi_sample=False):
         super().__init__(config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory, multi_sample)
-        self.trainingCircularMasks = trainingCircularMasks
 
     def _get_training_input(self, batch, generator=None, timesteps=None):
         clean_images = batch["gt_image"]
-
-        if self.trainingCircularMasks:
-            masks = self._get_random_masks(clean_images.shape[0], generator)
-            masks = masks.to(clean_images.device)
-        else:
-            masks = batch["mask"]
+ 
+        masks = batch["mask"]
 
         noisy_images, noise, timesteps = self._get_noisy_images(clean_images, generator, timesteps)
 
@@ -37,7 +32,7 @@ class TrainingConditional(Training):
         pipeline.to(self.accelerator.device)
         
         # Evaluate 2D images
-        if (self.epoch) % self.config.evaluate_epochs == 0 or self.epoch == self.config.num_epochs - 1: 
+        if not self.config.deactivate2Devaluation and ((self.epoch) % self.config.evaluate_epochs == 0 or self.epoch == self.config.num_epochs - 1): 
             self.evaluation2D.evaluate(
                 pipeline, 
                 self.global_step, 
