@@ -371,7 +371,7 @@ class DatasetMRI(Dataset):
             synthesis_mask = synthesis_mask.permute(0, 2, 1)
 
         # remove all zero slices from t1n
-        t1n[t1n<0] = 0 #Values below 0 are considered to be noise
+        t1n[t1n<0.01] = 0.01 #Values below 0.01 are considered to be noise
         if masks != None:
             masks[masks<0.01] = 0
         if segm != None:
@@ -398,7 +398,6 @@ class DatasetMRI(Dataset):
         #t1n = DatasetMRI._padding(t1n, pad_shape)
 
         #Normalize the image to [-1,1] following the DDPM paper 
-        t1n[t1n<0] = 0 #Values below 0 are considered to be noise
         t1n_max_v = torch.max(t1n)
         t1n /= t1n_max_v # [0,1]
         t1n = (t1n*2) - 1
