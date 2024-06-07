@@ -6,7 +6,9 @@ from .DatasetMRI2D import DatasetMRI2D
 
 from .DatasetMRI3D import DatasetMRI3D
 
-from .DDIMGuidedPipeline import DDIMGuidedPipeline
+from .GuidedPipelineConditional import GuidedPipelineConditional
+
+from .GuidedPipelineUnconditional import GuidedPipelineUnconditional
 
 from .DDIMInpaintPipeline import DDIMInpaintPipeline
 
@@ -37,7 +39,8 @@ from .TrainingUnconditional import TrainingUnconditional
 from .transform_utils import ScaleDecorator
 
 from .PipelineFactories import (
-    get_ddim_guided_pipeline,
+    get_guided_unconditional_pipeline,
+    get_guided_conditional_pipeline,
     get_ddim_inpaint_pipeline,
     get_repaint_pipeline,
     get_guided_repaint_pipeline

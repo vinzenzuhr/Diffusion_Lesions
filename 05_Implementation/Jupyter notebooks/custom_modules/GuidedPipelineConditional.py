@@ -8,7 +8,7 @@ from diffusers.utils.torch_utils import randn_tensor
 from typing import List, Optional, Tuple, Union
 import torch
 
-class DDIMGuidedPipeline(DiffusionPipeline):
+class GuidedPipelineConditional(DiffusionPipeline):
     r"""
     Pipeline to add noise to a given image (guide) and then denoise it.  
 
@@ -37,6 +37,7 @@ class DDIMGuidedPipeline(DiffusionPipeline):
     def __call__(
         self,
         guiding_imgs: torch.tensor, 
+        mask_image: torch.Tensor,
         timestep: int,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         eta: float = 0.0,
@@ -50,6 +51,8 @@ class DDIMGuidedPipeline(DiffusionPipeline):
         Args:
             guiding_imgs ('torch.tensor'): 
                 Images which are used as guides.
+            mask_image (`torch.FloatTensor` or `PIL.Image.Image`):
+                The mask_image where 1.0 define which part of the original image to inpaint.
             timestep (`int`):
                 The timestep to start the diffusion from. Must be between 1 and `num_inference_steps`. 
             generator (`torch.Generator`, *optional*):
@@ -69,11 +72,6 @@ class DDIMGuidedPipeline(DiffusionPipeline):
                 The output format of the generated image. Choose between `PIL.Image` or `np.array`.
             return_dict (`bool`, *optional*, defaults to `True`):
                 Whether or not to return a [`~pipelines.ImagePipelineOutput`] instead of a plain tuple.
-
-        Returns:
-            [`~pipelines.ImagePipelineOutput`] or `tuple`:
-                If `return_dict` is `True`, [`~pipelines.ImagePipelineOutput`] is returned, otherwise a `tuple` is
-                returned where the first element is a list with the generated images
         """
 
         batch_size = guiding_imgs.shape[0]
@@ -82,12 +80,12 @@ class DDIMGuidedPipeline(DiffusionPipeline):
         if isinstance(self.unet.config.sample_size, int):
             image_shape = (
                 batch_size,
-                self.unet.config.in_channels, 
+                self.unet.config.in_channels-2, # Minus the two channels for the mask and the img to be inpainted 
                 self.unet.config.sample_size,
                 self.unet.config.sample_size,
             )
         else:
-            image_shape = (batch_size, self.unet.config.in_channels, *self.unet.config.sample_size)
+            image_shape = (batch_size, self.unet.config.in_channels-2, *self.unet.config.sample_size) # Minus the two channels for the mask and the img to be inpainted
 
         if isinstance(generator, list) and len(generator) != batch_size:
             raise ValueError(
@@ -105,10 +103,14 @@ class DDIMGuidedPipeline(DiffusionPipeline):
         # create noisy images at given timestep
         reverse_timestep = num_inference_steps - timestep
         DDPM_timestep = self.scheduler.timesteps[reverse_timestep]
-        image = self.scheduler.add_noise(guiding_imgs, noise, DDPM_timestep)    
+        image = self.scheduler.add_noise(guiding_imgs, noise, DDPM_timestep)
+
+        #Input to unet model is concatenation of images, guiding images and masks
+        input = torch.cat([image, guiding_imgs, mask_image], dim=1)
+
         for t in self.scheduler.timesteps[reverse_timestep:]: 
             # 1. predict noise model_output
-            model_output = self.unet(image, t).sample
+            model_output = self.unet(input, t).sample
 
             # 2. predict previous mean of image x_t-1 and add variance depending on eta
             # eta corresponds to η in paper and should be between [0, 1]
@@ -116,6 +118,10 @@ class DDIMGuidedPipeline(DiffusionPipeline):
             image = self.scheduler.step(
                 model_output, t, image, eta=eta, use_clipped_model_output=use_clipped_model_output, generator=generator
             ).prev_sample   
+
+            
+            #3. Concatenate image with guiding images and masks
+            input=torch.cat((image, guiding_imgs, mask_image), dim=1)
 
         
         image = image.clamp(-1, 1)#.permute(0, 2, 3, 1)#.cpu().numpy() 
