@@ -65,11 +65,11 @@ class Evaluation2D(ABC):
         eval_generator = torch.Generator(device=self.accelerator.device).manual_seed(self.config.seed)
             
         # calc t specific training loss
-        timesteps = torch.tensor(self.config.eval_loss_timesteps, dtype=torch.int, device=self.accelerator.device)
         max_iter = len(self.eval_dataloader) if self.config.evaluate_num_batches == -1 else self.config.evaluate_num_batches
         for n_iter, batch_train in enumerate(self.train_dataloader):
             if n_iter >= max_iter:
                 break    
+            timesteps = torch.tensor(self.config.eval_loss_timesteps, dtype=torch.int, device=self.accelerator.device)
             input, noise, timesteps = _get_training_input(batch_train, generator=eval_generator, timesteps=timesteps)
             noise_pred = pipeline.unet(input, timesteps, return_dict=False)[0]
             for i, t in enumerate(timesteps):
@@ -90,16 +90,16 @@ class Evaluation2D(ABC):
         
         for n_iter, batch in enumerate(self.eval_dataloader):
             # calc validation loss
-            timesteps = torch.tensor(self.config.eval_loss_timesteps, dtype=torch.int, device=self.accelerator.device)
             input, noise, timesteps = _get_training_input(batch, generator=eval_generator)
             noise_pred = pipeline.unet(input, timesteps, return_dict=False)[0]
             loss = F.mse_loss(noise_pred, noise)
             all_loss = self.accelerator.gather_for_metrics(loss).mean() 
-            metrics["val_loss"] += all_loss 
+            metrics["val_loss"] += all_loss
             #free up memory
             del input, noise, timesteps, noise_pred, loss, all_loss
 
             # calc t specific validation loss
+            timesteps = torch.tensor(self.config.eval_loss_timesteps, dtype=torch.int, device=self.accelerator.device)
             input, noise, timesteps = _get_training_input(batch, generator=eval_generator, timesteps=timesteps)
             noise_pred = pipeline.unet(input, timesteps, return_dict=False)[0]
             for i, t in enumerate(timesteps):
@@ -153,7 +153,7 @@ class Evaluation2D(ABC):
             EvaluationUtils.save_image(image_list, title_list, os.path.join(self.config.output_dir, "samples_2D"), global_step, self.config.unet_img_shape)
 
             # save model
-            if not deactivate_save_model:# and (self.best_val_loss > metrics["val_loss"]):
-                #self.best_val_loss = metrics["val_loss"]
+            if not deactivate_save_model and (self.best_val_loss > metrics["val_loss"]):
+                self.best_val_loss = metrics["val_loss"]
                 pipeline.save_pretrained(self.config.output_dir)
                 print("model saved")
