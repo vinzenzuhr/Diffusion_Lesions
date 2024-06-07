@@ -11,7 +11,7 @@ class Evaluation2DSynthesis(Evaluation2D):
     def _add_coarse_lesions(self, clean_images, batch):
         synthesis_masks = batch["synthesis"] 
         masks = batch["mask"].to(torch.bool) 
-        lesion_intensity = EvaluationUtils.get_lesion_technique(
+        lesion_intensity = EvaluationUtils.get_lesion_intensity(
             self.config.add_lesion_technique, 
             clean_images[masks], 
             self.config.add_lesion_mean_intensity)
@@ -37,7 +37,10 @@ class Evaluation2DSynthesis(Evaluation2D):
 
     def _start_pipeline(self, pipeline, batch, generator, parameters={}):
         
-        assert type(pipeline).__name__ == "GuidedRePaintPipeline" or type(pipeline).__name__ == "DDIMGuidedPipeline" , "Pipeline must be of type DDIMGuidedPipeline or GuidedRePaintPipeline"
+        assert (type(pipeline).__name__ == "GuidedRePaintPipeline" 
+                or type(pipeline).__name__ == "GuidedPipelineUnconditional"
+                or type(pipeline).__name__ == "GuidedPipelineConditional") , \
+            "Pipeline must be of type DDIMGuidedPipeline or GuidedRePaintPipeline"
 
         clean_images = batch["gt_image"]
           

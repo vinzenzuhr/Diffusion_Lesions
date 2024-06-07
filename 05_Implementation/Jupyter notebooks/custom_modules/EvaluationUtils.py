@@ -66,10 +66,8 @@ def log_metrics(tb_summary, global_step, metrics, config):
         metrics: dict with metric name as key and metric value as value
     """
 
-    for key, value in metrics.items():
-        print(f"{key}: {value}")
-        tb_summary.add_scalar(key, value, global_step)
-    print("global_step: ", global_step)
+    for key, value in metrics.items(): 
+        tb_summary.add_scalar(key, value, global_step) 
 
     if config.log_csv:
         with open(os.path.join(config.output_dir, "metrics.csv"), "a") as f:
@@ -78,28 +76,25 @@ def log_metrics(tb_summary, global_step, metrics, config):
             f.write(f"global_step:{global_step}")
             f.write("\n")
 
-def get_lesion_technique(add_lesion_technique, image_lesions, lesion_intensity = None):
+def get_lesion_intensity(add_lesion_technique, image_lesions, lesion_intensity = None):
     if add_lesion_technique == "mean_intensity":
         return lesion_intensity
     elif add_lesion_technique == "other_lesions_1stQuantile":
         # use first quantile of lesion intensity as new lesion intensity
-        lesion_intensity = image_lesions.quantile(0.25)
-        print("1st quantile lesion intensity: ", lesion_intensity)
+        lesion_intensity = image_lesions.quantile(0.25) 
     elif add_lesion_technique == "other_lesions_mean":
         # use mean of lesion intensity as new lesion intensity
-        lesion_intensity = image_lesions.mean()
-        print("mean lesion intensity: ", lesion_intensity)
+        lesion_intensity = image_lesions.mean() 
     elif add_lesion_technique == "other_lesions_median":
         # use mean of lesion intensity as new lesion intensity
-        lesion_intensity = image_lesions.median()
-        print("median lesion intensity: ", lesion_intensity)
+        lesion_intensity = image_lesions.median() 
     elif add_lesion_technique == "other_lesions_3rdQuantile":
         # use 3rd quantile of lesion intensity as new lesion intensity
-        lesion_intensity = image_lesions.quantile(0.75)
-        print("3rd quantile lesion intensity: ", lesion_intensity)
+        lesion_intensity = image_lesions.quantile(0.75) 
     elif add_lesion_technique == "other_lesions_99Quantile":
-        lesion_intensity = image_lesions.quantile(0.99)
-        print("0.99 quantile lesion intensity: ", lesion_intensity)
+        lesion_intensity = image_lesions.quantile(0.99) 
+    elif add_lesion_technique == "empty":
+        lesion_intensity = 0
     else:
         raise ValueError("add_lesion_technique unknown")
     
@@ -108,11 +103,11 @@ def get_lesion_technique(add_lesion_technique, image_lesions, lesion_intensity =
 def save_image(images: list[list[PIL.Image]], titles: list[str], path: Path, global_step: int, img_shape: tuple[int, int]):
     os.makedirs(path, exist_ok=True)
     for image_list, title in zip(images, titles):             
-        if len(image_list) > 4:
+        if len(image_list) > 16:
             ValueError("Number of images in list must be less than 4")
-        missing_num = 4-len(image_list)
+        missing_num = 16-len(image_list)
         for _ in range(missing_num):
             image_list.append(PIL.Image.new("L", img_shape, 0))
-        image_grid = make_image_grid(image_list, rows=2, cols=2)
+        image_grid = make_image_grid(image_list, rows=4, cols=4)
         image_grid.save(f"{path}/{title}_{global_step:07d}.png")
     print("image saved")

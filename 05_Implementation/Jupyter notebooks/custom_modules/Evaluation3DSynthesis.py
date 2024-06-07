@@ -13,7 +13,7 @@ class Evaluation3DSynthesis(Evaluation3D):
         clean_images = batch["gt_image"][sample_idx] #torch.Size([1, 256, 256, 256])
         synthesis_masks = batch["synthesis"][sample_idx]  #torch.Size([1, 256, 256, 256])
         masks = batch["mask"][sample_idx].to(torch.bool)  #torch.Size([1, 256, 256, 256])
-        lesion_intensity = EvaluationUtils.get_lesion_technique(
+        lesion_intensity = EvaluationUtils.get_lesion_intensity(
             self.config.add_lesion_technique, 
             clean_images[masks], 
             self.config.add_lesion_mean_intensity)
