@@ -4,13 +4,6 @@
 # In[1]:
 
 
-import sys
-sys.path.insert(1, './custom_modules')
-
-
-# In[2]:
-
-
 #### create config
 from dataclasses import dataclass
 
@@ -19,19 +12,20 @@ class TrainingConfig:
     t1n_target_shape = None # will transform t1n during preprocessing (computationally expensive)
     unet_img_shape = (256,256)
     channels = 1
-    train_batch_size = 1 
-    eval_batch_size = 1 
-    num_sorted_samples = 3
-    num_epochs = 50 # 4.5s/iter, 21 min/epoch
+    effective_train_batch_size = 32
+    train_batch_size = 1
+    eval_batch_size = 1  
+    num_dataloader_workers = 8
+    num_epochs = 300 # 4.5s/iter, 21 min/epoch
     gradient_accumulation_steps = 1
     learning_rate = 1e-4
     lr_warmup_steps = 500
-    evaluate_epochs = 8 # anpassen auf Anzahl epochs
-    evaluate_num_batches = 2 # one batch needs 4 min 
+    evaluate_epochs = 15 # anpassen auf Anzahl epochs
+    evaluate_num_batches = 4 # one batch needs 4 min 
     evaluate_num_batches_3d = -1 
+    deactivate2Devaluation = False
     deactivate3Devaluation = True
-    evaluate_3D_epochs = 1000  # one 3D evaluation has 77 slices and needs 166min
-    save_model_epochs = 40
+    evaluate_3D_epochs = 1000  # one 3D evaluation has 77 slices and needs 166min 
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
     output_dir = "lesion-filling-3D-repaint"  # the model name locally and on the HF Hub
     dataset_train_path = "./datasets/filling/dataset_train/imgs"
@@ -45,11 +39,12 @@ class TrainingConfig:
     num_inference_steps=50 
     log_csv = False
     mode = "train" # train / eval
-    debug = True
+    debug = False
     jump_length=8
     jump_n_sample=10 
-    brightness_augmentation = True
+    brightness_augmentation = False
     #uniform_dataset_path = "./uniform_dataset"
+    eval_loss_timesteps=[20,80,140,200,260,320,380,440,560,620,680,740,800,860,920,980]
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub
     #hub_model_id = "<your-username>/<my-awesome-model>"  # the name of the repository to create on the HF Hub
@@ -59,23 +54,7 @@ class TrainingConfig:
 config = TrainingConfig()
 
 
-# In[3]:
-
-
-if config.debug:
-    config.num_inference_steps=1
-    config.train_batch_size = 1
-    config.eval_batch_size = 1 
-    config.train_only_connected_masks=False
-    config.eval_only_connected_masks=False
-    config.evaluate_num_batches=1
-    config.dataset_train_path = "./datasets/filling/dataset_eval/imgs"
-    config.segm_train_path = "./datasets/filling/dataset_eval/segm"
-    config.masks_train_path = "./datasets/filling/dataset_eval/masks"  
-    config.num_sorted_samples=1
-
-
-# In[4]:
+# In[14]:
 
 
 #setup huggingface accelerate
@@ -83,16 +62,55 @@ import torch
 import numpy as np
 import accelerate
 accelerate.commands.config.default.write_basic_config(config.mixed_precision)
+#if there are problems with ports then add manually "main_process_port: 0" or another number to yaml file
 
 
-# In[5]:
+# In[15]:
 
 
-from DatasetMRI2D import DatasetMRI2D
-from DatasetMRI3D import DatasetMRI3D
 from pathlib import Path
-from torchvision import transforms
-from transform_utils import ScaleDecorator 
+import json
+with open(Path.home() / ".cache/huggingface/accelerate/default_config.yaml") as f:
+    data = json.load(f)
+    config.num_processes = data["num_processes"]
+
+
+# In[16]:
+
+
+config.num_sorted_samples = int((config.effective_train_batch_size / config.gradient_accumulation_steps) / config.num_processes)
+
+
+# In[2]:
+
+
+if config.debug:
+    config.num_inference_steps=1
+    config.train_batch_size = 1
+    config.eval_batch_size = 1 
+    config.eval_loss_timesteps = [20]
+    config.train_only_connected_masks=False
+    config.eval_only_connected_masks=False
+    config.evaluate_num_batches=1
+    config.dataset_train_path = "./datasets/filling/dataset_eval/imgs"
+    config.segm_train_path = "./datasets/filling/dataset_eval/segm"
+    config.masks_train_path = "./datasets/filling/dataset_eval/masks"  
+    config.num_sorted_samples=1
+    config.num_dataloader_workers = 1
+
+
+# In[17]:
+
+
+print(f"Start training with batch size {config.train_batch_size}, {config.gradient_accumulation_steps} accumulation steps and {config.num_processes} process(es)")
+
+
+# In[4]:
+
+
+from custom_modules import DatasetMRI2D, DatasetMRI3D, ScaleDecorator
+from pathlib import Path
+from torchvision import transforms 
 
 #add augmentation
 transformations = None
@@ -105,11 +123,11 @@ datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), ro
 dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape =config.t1n_target_shape)
 
 
-# In[6]:
+# In[5]:
 
 
 #create model
-from pseudo3D import UNet2DModel
+from custom_modules import UNet2DModel
 
 model = UNet2DModel(
     sample_size=config.unet_img_shape,  # the target image resolution
@@ -138,7 +156,7 @@ model = UNet2DModel(
 config.model = "Pseudo3DUNet2DModel"
 
 
-# In[7]:
+# In[6]:
 
 
 #setup noise scheduler
@@ -151,7 +169,7 @@ noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
 config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
 
 
-# In[8]:
+# In[7]:
 
 
 # setup lr scheduler
@@ -167,14 +185,11 @@ lr_scheduler = get_cosine_schedule_with_warmup(
 config.lr_scheduler = "cosine_schedule_with_warmup"
 
 
-# In[9]:
+# In[8]:
 
 
-from TrainingUnconditional import TrainingUnconditional
-from RePaintPipeline import RePaintPipeline
-from Evaluation2DFilling import Evaluation2DFilling
-from Evaluation3DFilling import Evaluation3DFilling 
-import PipelineFactories
+from custom_modules import TrainingUnconditional, RePaintPipeline, Evaluation2DFilling, Evaluation3DFilling 
+from custom_modules import PipelineFactories
 
 config.conditional_data = "None"
 
@@ -213,7 +228,7 @@ if config.mode == "train":
 if config.mode == "eval":
     training3Dlesions.config.deactivate3Devaluation = False
     pipeline = RePaintPipeline.from_pretrained(config.output_dir) 
-    training3Dlesions.evaluate(pipeline)
+    training3Dlesions.evaluate(pipeline, deactivate_save_model=True)
 
 
 # In[ ]:

@@ -18,10 +18,11 @@ class TrainingConfig:
     num_dataloader_workers = 8
     evaluate_num_batches = 2 # one batch needs ~130s 
     num_epochs = 350
-    gradient_accumulation_steps = 2
+    gradient_accumulation_steps = 1
     learning_rate = 1e-4
     lr_warmup_steps = 500
     evaluate_epochs = 40 # anpassen auf Anzahl epochs
+    deactivate2Devaluation = False
     deactivate3Devaluation = True
     evaluate_3D_epochs = 1000  # one 3D evaluation has 77 slices and needs 166min
     evaluate_num_batches_3d = -1  
@@ -37,8 +38,8 @@ class TrainingConfig:
     eval_only_connected_masks=False 
     num_inference_steps=50 
     log_csv = False
-    mode = "train" # train / eval
-    debug = False
+    mode = "eval" # train / eval
+    debug = True
     jump_length=8
     jump_n_sample=10 
     brightness_augmentation = True
@@ -99,10 +100,10 @@ if config.debug:
     config.num_dataloader_workers = 1
 
 
-# In[ ]:
+# In[17]:
 
 
-assert len(config.eval_loss_timesteps) == config.eval_batch_size
+print(f"Start training with batch size {config.train_batch_size}, {config.gradient_accumulation_steps} accumulation steps and {config.num_processes} process(es)")
 
 
 # In[7]:
@@ -237,4 +238,4 @@ if config.mode == "eval": # Nr. 17 has around ~80 2D slides with mask content
 print("Finished Training")
 
 
-# In[13]:
+# In[15]:

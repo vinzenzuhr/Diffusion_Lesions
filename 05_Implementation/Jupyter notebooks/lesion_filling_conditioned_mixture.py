@@ -13,11 +13,11 @@ class TrainingConfig:
     unet_img_shape = (256,256)
     channels = 1
     effective_train_batch_size=16 
-    eval_batch_size = 4
+    eval_batch_size = 16
     num_sorted_samples = 1
     num_dataloader_workers = 8
     num_epochs = 68 # one epoch needs ~12min (x2 GPU), because their are more training samples due connected_components
-    gradient_accumulation_steps = 2
+    gradient_accumulation_steps = 1
     learning_rate = 1e-4
     lr_warmup_steps = 100 #500
     evaluate_epochs = 4
@@ -39,10 +39,11 @@ class TrainingConfig:
     num_inference_steps=50
     log_csv = False
     mode = "train" # train / eval
-    debug = False
+    debug = True
     brightness_augmentation = True
     restrict_mask_to_wm=True
-    eval_loss_timesteps=[20,40,80,140]
+    proportionTrainingCircularMasks = 0.5
+    eval_loss_timesteps=[20,80,140,200,260,320,380,440,560,620,680,740,800,860,920,980]
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub
     #hub_model_id = "<your-username>/<my-awesome-model>"  # the name of the repository to create on the HF Hub
@@ -120,38 +121,9 @@ datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), ro
 dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape)
 
 
-# ### Visualize dataset
-
-# In[8]:
-
-
-import matplotlib.pyplot as plt
-
-# Get 6 random sample
-random_indices = np.random.randint(0, len(datasetTrain) - 1, size=(6)) 
-
-# Plot: t1n images
-fig, axis = plt.subplots(2,3,figsize=(16,4))
-for i, idx in enumerate(random_indices):
-    axis[i//3,i%3].imshow((datasetTrain[idx]["gt_image"].squeeze()+1)/2)
-    axis[i//3,i%3].set_axis_off()
-fig.show()
-
-
-# In[9]:
-
-
-# Plot: masks
-fig, axis = plt.subplots(2,3,figsize=(16,4))
-for i, idx in enumerate(random_indices):
-    axis[i//3,i%3].imshow(datasetTrain[idx]["mask"].squeeze())
-    axis[i//3,i%3].set_axis_off()
-fig.show()
-
-
 # ### Prepare Training
 
-# In[10]:
+# In[8]:
 
 
 #create model
@@ -169,10 +141,10 @@ model = UNet2DModel(
         "DownBlock2D",
         "DownBlock2D",
         "AttnDownBlock2D",  # a ResNet downsampling block with spatial self-attention
-        "DownBlock2D",
+        "AttnDownBlock2D",
     ),
     up_block_types=(
-        "UpBlock2D",  # a regular ResNet upsampling block
+        "AttnUpBlock2D",  # a regular ResNet upsampling block
         "AttnUpBlock2D",  # a ResNet upsampling block with spatial self-attention
         "UpBlock2D",
         "UpBlock2D",
@@ -181,10 +153,10 @@ model = UNet2DModel(
     ),
 )
 
-config.model = "UNet2DModel"
+config.model = "BigUNet2DModel"
 
 
-# In[11]:
+# In[9]:
 
 
 #setup noise scheduler
@@ -201,7 +173,7 @@ noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
 config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
 
 
-# In[12]:
+# In[10]:
 
 
 # setup lr scheduler
@@ -218,7 +190,7 @@ lr_scheduler = get_cosine_schedule_with_warmup(
 config.lr_scheduler = "cosine_schedule_with_warmup"
 
 
-# In[13]:
+# In[11]:
 
 
 from custom_modules import TrainingConditional, DDIMInpaintPipeline, Evaluation2DFilling, Evaluation3DFilling
@@ -234,15 +206,14 @@ args = {
     "lr_scheduler": lr_scheduler, 
     "datasetTrain": datasetTrain, 
     "datasetEvaluation": datasetEvaluation, 
-    "dataset3DEvaluation": dataset3DEvaluation, 
-    "trainingCircularMasks": False, 
+    "dataset3DEvaluation": dataset3DEvaluation,  
     "evaluation2D": Evaluation2DFilling,
     "evaluation3D": Evaluation3DFilling, 
     "pipelineFactory": PipelineFactories.get_ddim_inpaint_pipeline}
 trainingLesions = TrainingConditional(**args)
 
 
-# In[14]:
+# In[ ]:
 
 
 if config.mode == "train":

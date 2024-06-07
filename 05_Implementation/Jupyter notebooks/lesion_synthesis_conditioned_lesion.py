@@ -1,59 +1,62 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[2]:
 
 
-#### create config
+#create config
 from dataclasses import dataclass
 
 @dataclass
 class TrainingConfig: 
     t1n_target_shape = None # will transform t1n during preprocessing (computationally expensive)
-    unet_img_shape = (128,256)
+    unet_img_shape = (160,256)
     channels = 1
-    effective_train_batch_size= 32#16 
+    effective_train_batch_size=16
+    train_batch_size = 1
     eval_batch_size = 1 
-    num_sorted_samples = 16
     num_dataloader_workers = 8
-    num_epochs = 16
+    num_epochs = 1000 # one epoch needs ~12min (x2 GPU), because their are more training samples due connected_components
     gradient_accumulation_steps = 1
     learning_rate = 1e-4
-    lr_warmup_steps = 500
-    evaluate_epochs = 1 # adjust to num_epochs
-    evaluate_num_batches = 4 # ~3s/batch. 2.5 min/Evaluation 3D epoch with all batchesr
-    evaluate_num_batches_3d = -1 
+    lr_warmup_steps = 100 #500
+    evaluate_epochs = 4
     deactivate2Devaluation = False
     deactivate3Devaluation = True
-    evaluate_3D_epochs = 1000  # 3 min/Evaluation 3D 
+    evaluate_num_batches = 30 # one batch needs ~15s.  
+    evaluate_num_batches_3d = 2
+    evaluate_3D_epochs = 1000  # one 3D evaluation needs ~20min 
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
-    output_dir = "lesion-synthesis-3D"  # the model name locally and on the HF Hub
+    output_dir = "lesion-synthesis-3D-cond-mixture"  # the model name locally and on the HF Hub
     dataset_train_path = "./datasets/synthesis/dataset_train/imgs"
     segm_train_path = "./datasets/synthesis/dataset_train/segm"
     masks_train_path = "./datasets/synthesis/dataset_train/masks"
     dataset_eval_path = "./datasets/synthesis/dataset_eval/imgs"
     segm_eval_path = "./datasets/synthesis/dataset_eval/segm"
-    masks_eval_path = "./datasets/synthesis/dataset_eval/masks"
-    train_only_connected_masks=False  # No Training with lesion masks
-    eval_only_connected_masks=False 
+    masks_eval_path = "./datasets/synthesis/dataset_eval/masks" 
+    train_only_connected_masks=True
+    eval_only_connected_masks=False
     num_inference_steps=50
-    log_csv = True
-    add_lesion_technique = "other_lesions_median" # 'mean_intensity', 'other_lesions_1stQuantile', 'other_lesions_mean', 'other_lesions_median', 'other_lesions_3rdQuantile', 'other_lesions_99Quantile'
+    log_csv = False
+    add_lesion_technique = "other_lesions_99Quantile" # 'mean_intensity', 'other_lesions_1stQuantile', 'other_lesions_mean', 'other_lesions_median', 'other_lesions_3rdQuantile', 'other_lesions_99Quantile', 'empty'
     add_lesion_mean_intensity = -0.5492 
     intermediate_timestep = 3 # starting from this timesteps. num_inference_steps means the whole pipeline and 1 the last step. 
     mode = "train" # 'train', 'eval' or "tuning_parameters"
-    debug = True     
-    jump_length=intermediate_timestep
-    jump_n_sample=3
-    brightness_augmentation = False
-    eval_loss_timesteps= [20,40,80,120,160,200,240,280,320,360,400,440,480,520,560,600] #[20,40,80,140]
+    debug = False
+    brightness_augmentation = True
+    restrict_mask_to_wm=True
+    proportionTrainingCircularMasks = 0.5
+    eval_loss_timesteps=[20,80,140,200,260,320,380,440,560,620,680,740,800,860,920,980]
 
-    push_to_hub = False  # whether to upload the saved model to the HF Hub 
+    push_to_hub = False  # whether to upload the saved model to the HF Hub
+    #hub_model_id = "<your-username>/<my-awesome-model>"  # the name of the repository to create on the HF Hub
+    #hub_private_repo = False
+    #overwrite_output_dir = True  # overwrite the old model when re-running the notebook
     seed = 0
 config = TrainingConfig()
 
 
-# In[14]:
+# In[3]:
 
 
 #setup huggingface accelerate
@@ -64,7 +67,7 @@ accelerate.commands.config.default.write_basic_config(config.mixed_precision)
 #if there are problems with ports then add manually "main_process_port: 0" or another number to yaml file
 
 
-# In[15]:
+# In[4]:
 
 
 from pathlib import Path
@@ -74,39 +77,36 @@ with open(Path.home() / ".cache/huggingface/accelerate/default_config.yaml") as 
     config.num_processes = data["num_processes"]
 
 
-# In[16]:
+# In[5]:
 
 
 config.num_sorted_samples = int((config.effective_train_batch_size / config.gradient_accumulation_steps) / config.num_processes)
 
 
-# In[2]:
+# In[5]:
 
 
 if config.debug:
-    config.num_inference_steps = 1
-    config.intermediate_timestep = 1
+    config.num_inference_steps=1
     config.train_batch_size = 1
-    config.eval_batch_size = 1
+    config.eval_batch_size = 1 
     config.eval_loss_timesteps = [20]
     config.train_only_connected_masks=False
     config.eval_only_connected_masks=False
-    config.evaluate_num_batches = 3
-    config.deactivate3Devaluation = False
+    config.evaluate_num_batches=1
     config.dataset_train_path = "./datasets/synthesis/dataset_eval/imgs"
     config.segm_train_path = "./datasets/synthesis/dataset_eval/segm"
-    config.masks_train_path = "./datasets/synthesis/dataset_eval/masks" 
-    config.num_sorted_samples = 1
+    config.masks_train_path = "./datasets/synthesis/dataset_eval/masks"
     config.num_dataloader_workers = 1
 
 
-# In[ ]:
+# In[6]:
 
 
-assert len(config.eval_loss_timesteps) == config.eval_batch_size
+print(f"Start training with batch size {config.train_batch_size}, {config.gradient_accumulation_steps} accumulation steps and {config.num_processes} process(es)")
 
 
-# In[4]:
+# In[7]:
 
 
 from custom_modules import DatasetMRI2D, DatasetMRI3D, ScaleDecorator
@@ -119,14 +119,14 @@ if config.brightness_augmentation:
     transformations = transforms.RandomApply([ScaleDecorator(transforms.ColorJitter(brightness=1))], p=0.5)
 
 #create dataset
-datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), only_connected_masks=config.train_only_connected_masks, t1n_target_shape=config.t1n_target_shape, num_sorted_samples=config.num_sorted_samples, transforms=transformations)
-datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), root_dir_synthesis=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape, num_sorted_samples=config.num_sorted_samples)
+datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), root_dir_masks=Path(config.masks_train_path), only_connected_masks=config.train_only_connected_masks, t1n_target_shape=config.t1n_target_shape, transforms=transformations, restrict_mask_to_wm=config.restrict_mask_to_wm)
+datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), root_dir_synthesis=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape)
 dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), root_dir_synthesis=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape)
 
 
-# ### Training
+# ### Prepare Training
 
-# In[5]:
+# In[8]:
 
 
 #create model
@@ -134,7 +134,7 @@ from custom_modules import UNet2DModel
 
 model = UNet2DModel(
     sample_size=config.unet_img_shape,  # the target image resolution
-    in_channels=config.channels,  # the number of input channels, 3 for RGB images
+    in_channels=3,  # the number of input channels, 3 for RGB images
     out_channels=config.channels,  # the number of output channels
     layers_per_block=2,  # how many ResNet layers to use per UNet block
     block_out_channels=(128, 128, 256, 256, 512, 512),  # the number of output channels for each UNet block
@@ -159,7 +159,7 @@ model = UNet2DModel(
 config.model = "Pseudo3DUNet2DModel"
 
 
-# In[6]:
+# In[9]:
 
 
 #setup noise scheduler
@@ -168,11 +168,15 @@ from PIL import Image
 from diffusers import DDIMScheduler
 
 noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
+#sample_image = datasetTrain[0]['gt_image'].unsqueeze(0)
+#noise = torch.randn(sample_image.shape)
+#timesteps = torch.LongTensor([50])
+#noisy_image = noise_scheduler.add_noise(sample_image, noise, timesteps)
 
 config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
 
 
-# In[7]:
+# In[10]:
 
 
 # setup lr scheduler
@@ -185,16 +189,17 @@ lr_scheduler = get_cosine_schedule_with_warmup(
     num_warmup_steps=config.lr_warmup_steps,
     num_training_steps=(math.ceil(len(datasetTrain)/config.train_batch_size) * config.num_epochs), # num_iterations per epoch * num_epochs
 )
+
 config.lr_scheduler = "cosine_schedule_with_warmup"
 
 
-# In[8]:
+# In[11]:
 
 
-from custom_modules import TrainingUnconditional, GuidedRePaintPipeline, Evaluation2DSynthesis, Evaluation3DSynthesis 
+from custom_modules import TrainingConditional, GuidedPipelineConditional, Evaluation2DSynthesis, Evaluation3DSynthesis
 from custom_modules import PipelineFactories
 
-config.conditional_data = "None"
+config.conditional_data = "Mixture"
 
 args = {
     "config": config, 
@@ -204,17 +209,11 @@ args = {
     "lr_scheduler": lr_scheduler, 
     "datasetTrain": datasetTrain, 
     "datasetEvaluation": datasetEvaluation, 
-    "dataset3DEvaluation": dataset3DEvaluation, 
+    "dataset3DEvaluation": dataset3DEvaluation,  
     "evaluation2D": Evaluation2DSynthesis,
     "evaluation3D": Evaluation3DSynthesis, 
-    "pipelineFactory": PipelineFactories.get_guided_repaint_pipeline, 
-    "multi_sample": config.num_sorted_samples > 1,
-    "deactivate3Devaluation": config.deactivate3Devaluation,
-    "evaluation_pipeline_parameters": {
-                "jump_length": config.jump_length,
-                "jump_n_sample": config.jump_n_sample,
-            }} 
-trainingSynthesis = TrainingUnconditional(**args)
+    "pipelineFactory": PipelineFactories.get_guided_conditional_pipeline}
+trainingSynthesis = TrainingConditional(**args)
 
 
 # In[ ]:
@@ -229,7 +228,7 @@ if config.mode == "train":
 
 if config.mode == "eval":
     trainingSynthesis.config.deactivate3Devaluation = False
-    pipeline = GuidedRePaintPipeline.from_pretrained(config.output_dir) 
+    pipeline = GuidedPipelineConditional.from_pretrained(config.output_dir) 
     trainingSynthesis.evaluate(pipeline, deactivate_save_model=True)
 
 
@@ -239,11 +238,11 @@ if config.mode == "eval":
 import os
 import csv
 from itertools import product
-import matplotlib.pyplot as pl
+import matplotlib.pyplot as plt
 
 if config.mode == "tuning_parameters":
     trainingSynthesis.config.deactivate3Devaluation = False
-    pipeline = GuidedRePaintPipeline.from_pretrained(config.output_dir)
+    pipeline = GuidedPipelineConditional.from_pretrained(config.output_dir)
     original_output_dir = config.output_dir 
     timesteps = [1, 3, 5]
     resample_step = [1, 3, 5]
@@ -282,4 +281,8 @@ if config.mode == "tuning_parameters":
     plt.savefig(original_output_dir + '/lpips_parameters.png')
 
 
-# In[2]:
+# In[ ]:
+
+
+print("Finished Training")
+
