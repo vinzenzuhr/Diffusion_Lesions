@@ -15,6 +15,7 @@ class DatasetMRI2D(DatasetMRI):
     def __init__(
         self, 
         root_dir_img: Path, 
+        restriction: str, # 'mask', 'segm', 'unrestricted'
         root_dir_segm: Path = None, 
         root_dir_masks: Path = None, 
         root_dir_synthesis: Path = None, 
@@ -43,6 +44,7 @@ class DatasetMRI2D(DatasetMRI):
             dilation,
             restrict_mask_to_wm)
         
+        self.restriction = restriction
         self.num_sorted_samples = num_sorted_samples
         self.transforms = transforms
         self.min_area = min_area
@@ -57,38 +59,29 @@ class DatasetMRI2D(DatasetMRI):
         # go through all 3D segmentation and add relevant 2D slices to dict
         idx_dict=0 
         for idx_t1n in tqdm(np.arange(len(self.list_paths_t1n))):  
-            slices_dicts = list()            
-            # if there are masks restrict slices to mask content
-            if(self.list_paths_masks):  
-                # multiple masks for one t1n image are possible  
-                for path_mask in self.list_paths_masks[idx_t1n]: 
+            slices_dicts = list()
+
+            # if there are a list of masks, add all of them
+            if(self.list_paths_masks):
+                for path_mask in self.list_paths_masks[idx_t1n]:
                     slices_dicts.append(
                         self._get_relevant_slices(
-                            "mask", 
-                            path_t1n = self.list_paths_t1n[idx_t1n],
-                            path_mask = path_mask, 
+                            restriction=self.restriction,
+                            path_t1n=self.list_paths_t1n[idx_t1n],
+                            path_mask=path_mask,
                             path_segm = self.list_paths_segm[idx_t1n] if self.list_paths_segm else None, 
-                            path_synthesis = self.list_paths_synthesis[idx_t1n] if self.list_paths_synthesis else None)) 
-            # if there are segmentation restrict slices to white matter
-            elif(self.list_paths_segm):
+                            path_synthesis = self.list_paths_synthesis[idx_t1n] if self.list_paths_synthesis else None,
+                        )
+                    )
+            else:
                 slices_dicts.append(
                     self._get_relevant_slices(
-                        procedure = "segmentation",  
+                        restriction=self.restriction,
                         path_t1n = self.list_paths_t1n[idx_t1n],
-                        path_segm = self.list_paths_segm[idx_t1n]))  
-            # if there are no masks and no segmentations don't restrict slices  
-            else:  
-                t1n_example = nib.load(self.list_paths_t1n[idx_t1n])
-                t1n_example, _, _, _, _ = self.preprocess(t1n_example) 
-                slices_dicts.append({
-                    "path_mask": None,
-                    "path_segm": None,
-                    "path_synthesis": None,
-                    "list_relevant_slices": np.arange(0, t1n_example.shape[1]),
-                    "path_component_matrix": None,
-                    "list_relevant_components": None
-                }) 
- 
+                        path_segm = self.list_paths_segm[idx_t1n],
+                        path_synthesis = self.list_paths_synthesis[idx_t1n] if self.list_paths_synthesis else None,
+                    )
+                ) 
 
             for slices_dict in slices_dicts:  
                 for i in np.arange(len(slices_dict["list_relevant_slices"]), step=1 if self.random_sorted_samples else num_sorted_samples):
@@ -197,7 +190,10 @@ class DatasetMRI2D(DatasetMRI):
                 relevant_components.append(component)
         return relevant_components
 
-    def _get_relevant_slices(self, procedure, path_t1n, path_mask = None, path_segm = None, path_synthesis = None):
+    def _get_relevant_slices(self, restriction, path_t1n, path_mask = None, path_segm = None, path_synthesis = None):
+        # check preconditions 
+        assert (restriction == "mask" and path_t1n) or (restriction == "segm" and path_segm)  
+
         output = dict()
         output["path_mask"] = None
         output["path_segm"] = None
@@ -205,77 +201,56 @@ class DatasetMRI2D(DatasetMRI):
         output["list_relevant_slices"] = None
         output["path_component_matrix"] = None 
         output["list_relevant_components"] = None
-
-        if procedure == "mask": 
-            assert path_mask, "If procedure is mask, then path_mask is mandatory"  
-            t1n_mask = self._get_mask(path_mask, path_t1n, path_segm)
-            if (t1n_mask is None):
-                return None, [], []
-
-            # extract connected components from mask or load them if they are already exist
-            path_component_matrix = None
-            if self.only_connected_masks: 
-                path_component_matrix = os.path.splitext(path_mask)[0] + "_component_matrix.npy"  
-                component_matrix, _ = self._get_component_matrix(t1n_mask, path_component_matrix)
-
-
-            # go through every slice and add (connected) masks to dataset. Make sure that there are at least num_samples slices in a package, which are located next to each other.
-            list_relevant_slices = list()
-            list_relevant_components = list()
-            position_in_package = 0
-            for idx_slice in torch.arange(t1n_mask.shape[1]):
-                if not t1n_mask[:,idx_slice,:].any() and position_in_package == 0:
-                    continue
-
-                relevant_components = None
-                if self.only_connected_masks:
-                    relevant_components = self._get_relevant_components(component_matrix, idx_slice)
-                    if len(relevant_components) == 0 and position_in_package == 0:
-                        continue
-                list_relevant_slices.append(idx_slice)
-                list_relevant_components.append(relevant_components) 
-
-                position_in_package += 1
-                if position_in_package == self.num_sorted_samples:
-                    position_in_package = 0 
-
-            output["path_mask"] = path_mask
-            output["path_segm"] = path_segm
-            output["path_synthesis"] = path_synthesis
-            output["list_relevant_slices"] = list_relevant_slices
-            output["path_component_matrix"] = path_component_matrix
-            output["list_relevant_components"] = list_relevant_components
-
-            return output 
         
-        elif procedure == "segmentation":
-            assert path_segm, "If procedure is segmentation, then path_segm is mandatory"
-            # preprocess t1n, mask, segm and synthesis
-            t1n_img = nib.load(path_t1n) 
-            t1n_segm = nib.load(path_segm) 
-            _, _, _, t1n_segm, _ = self.preprocess(t1n_img, segm=t1n_segm)
+        t1n_img = nib.load(path_t1n)
+        t1n_mask = nib.load(path_mask) if path_mask else None
+        t1n_segm = nib.load(path_segm) if path_segm else None 
+        _, _, t1n_mask, t1n_segm, _ = self.preprocess(t1n_img, masks=t1n_mask, segm=t1n_segm)
 
-            # Restrict slices to white matter regions
-            t1n_segm = self._get_binary_segm(t1n_segm)
+        # get binary white matter segmentations
+        if path_segm:
+            t1n_segm = self._get_binary_segm(t1n_segm)            
 
-            # get first slice with white matter content  
-            i=0
-            while(not t1n_segm[:,i,:].any()):
-                i += 1 
-            bottom = i
+            if self.restrict_mask_to_wm and path_mask:
+                t1n_mask = t1n_segm * t1n_mask
 
-            # get last slice with white matter content  
-            i=t1n_segm.shape[1]-1
-            while(not t1n_segm[:,i,:].any()):
-                i -= 1 
-            top = i+1  
+        # extract connected components from mask or load them if they are already exist
+        path_component_matrix = None
+        if self.only_connected_masks:
+            path_component_matrix = os.path.splitext(path_mask)[0] + "_component_matrix.npy"  
+            component_matrix, _ = self._get_component_matrix(t1n_mask, path_component_matrix)
 
-            output["path_segm"] = path_segm
-            output["list_relevant_slices"] = np.arange(bottom, top)
-            
-            return output
-        else:
-            raise ValueError(f"Procedure {procedure} is not supported")
+        # go through every slice and add relevant slices to dataset. Make sure that there are at least num_samples slices in a package, which are located next to each other.
+        list_relevant_slices = list()
+        list_relevant_components = list()
+        position_in_package = 0       
+        for idx_slice in torch.arange(t1n_img.shape[1]):
+            # if there is no relevant content and it's not in the middle of a package then skip it
+            if restriction == "mask" and not t1n_mask[:,idx_slice,:].any() and position_in_package == 0:
+                continue
+            if restriction == "segm" and not t1n_segm[:,idx_slice,:].any() and position_in_package == 0:
+                continue
+
+            relevant_components = None
+            if self.only_connected_masks:
+                relevant_components = self._get_relevant_components(component_matrix, idx_slice)
+                if restriction == "mask" and len(relevant_components) == 0 and position_in_package == 0:
+                    continue
+            list_relevant_slices.append(idx_slice)
+            list_relevant_components.append(relevant_components) 
+
+            position_in_package += 1
+            if position_in_package == self.num_sorted_samples:
+                position_in_package = 0 
+
+        output["path_mask"] = path_mask
+        output["path_segm"] = path_segm
+        output["path_synthesis"] = path_synthesis
+        output["list_relevant_slices"] = list_relevant_slices
+        output["path_component_matrix"] = path_component_matrix
+        output["list_relevant_components"] = list_relevant_components
+
+        return output  
         
     def get_random_circular_masks(self, n, generator=None):
         #create circular mask with random center around the center point of the pictures and a radius between 3 and 50 pixels
