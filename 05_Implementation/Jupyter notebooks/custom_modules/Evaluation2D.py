@@ -17,7 +17,7 @@ class Evaluation2D(ABC):
         self.tb_summary = tb_summary
         self.accelerator = accelerator 
         self.lpips_metric = LearnedPerceptualImagePatchSimilarity(net_type='alex').to(self.accelerator.device)
-        self.best_val_loss = float("inf")
+        self.best_ssim = float("inf")
 
     def _calc_lpip(self, images_1, images_2):
 
@@ -153,7 +153,7 @@ class Evaluation2D(ABC):
             EvaluationUtils.save_image(image_list, title_list, os.path.join(self.config.output_dir, "samples_2D"), global_step, self.config.unet_img_shape)
 
             # save model
-            if not deactivate_save_model and (self.best_val_loss > metrics["val_loss"]):
-                self.best_val_loss = metrics["val_loss"]
+            if not deactivate_save_model and (self.best_ssim > metrics["ssim_in"]):
+                self.best_ssim = metrics["ssim_in"]
                 pipeline.save_pretrained(self.config.output_dir)
                 print("model saved")
