@@ -132,7 +132,7 @@ class DatasetMRI2D(DatasetMRI):
             else:
                 t1n_segm_slice = torch.empty(0)
              
-            if (self.proportionTrainingCircularMasks > random.random()) or (mask == None and self.default_to_circular_mask): 
+            if (self.proportionTrainingCircularMasks > random.random()):  
                 mask_slice = self.get_random_circular_masks(n=1)
                 if self.num_sorted_samples > 1:
                     t1n_segm_slice = t1n_segm_slice.unsqueeze(1)
@@ -151,6 +151,12 @@ class DatasetMRI2D(DatasetMRI):
                         binary_white_matter_segm = self._get_binary_segm(t1n_segm)
                         mask = binary_white_matter_segm * mask 
                 mask_slice = mask[:,idx_slice:idx_slice+self.num_sorted_samples,:].permute(1, 0, 2)
+
+                if not mask_slice.any() and self.default_to_circular_mask:
+                    mask_slice = self.get_random_circular_masks(n=1)
+                    if self.num_sorted_samples > 1:
+                        t1n_segm_slice = t1n_segm_slice.unsqueeze(1)
+
                 if self.num_sorted_samples > 1:
                     mask_slice = mask_slice.unsqueeze(1)
             else:
