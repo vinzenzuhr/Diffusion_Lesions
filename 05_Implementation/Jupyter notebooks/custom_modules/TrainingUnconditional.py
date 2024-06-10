@@ -4,8 +4,8 @@ import torch
 import os
 
 class TrainingUnconditional(Training):
-    def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory, multi_sample=False, deactivate3Devaluation = True, evaluation_pipeline_parameters = {}):
-        super().__init__(config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory, multi_sample)
+    def __init__(self, config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory, multi_sample=False, min_snr_loss=False, deactivate3Devaluation = True, evaluation_pipeline_parameters = {}):
+        super().__init__(config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, pipelineFactory, multi_sample, min_snr_loss)
         self.deactivate3Devaluation = deactivate3Devaluation
         self.evaluation_pipeline_parameters = evaluation_pipeline_parameters 
 

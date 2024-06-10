@@ -9,6 +9,7 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from torch.utils.data import RandomSampler 
+from diffusers.training_utils import compute_snr
 import torch.nn.functional as F
 from tqdm.auto import tqdm
 
@@ -30,13 +31,16 @@ class Training(ABC):
             evaluation2D, 
             evaluation3D, 
             pipelineFactory, 
-            multi_sample=False):
+            multi_sample=False,
+            min_snr_loss=False,
+            ):
         self.config = config
         self.model = model
         self.noise_scheduler = noise_scheduler
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler  
-        self.pipelineFactory = pipelineFactory 
+        self.pipelineFactory = pipelineFactory
+        self.min_snr_loss=min_snr_loss
  
         self.accelerator = Accelerator(
             mixed_precision=config.mixed_precision,
@@ -79,6 +83,20 @@ class Training(ABC):
         self.epoch = 0
         self.global_step = 0 
 
+        if self.min_snr_loss:
+            # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
+            # Since we predict the noise instead of x_0, the original formulation is slightly changed.
+            # This is discussed in Section 4.2 of the same paper.
+            timesteps=torch.arange(1000, device=self.accelerator.device)
+            snr=compute_snr(self.noise_scheduler, timesteps)
+            gamma=self.config.snr_gamma
+            self.loss_weights=(
+                torch.stack([snr, gamma * torch.ones_like(timesteps, device=self.accelerator.device)], dim=1).min(dim=1)[0] / snr
+            )
+            # For zero-terminal SNR, we have to handle the case where a sigma of Zero results in a Inf value.
+            self.loss_weights[snr==0] = 1.0
+
+
     def log_meta_logs(self):
         #log at tensorboard
         scalars = [              
@@ -99,6 +117,8 @@ class Training(ABC):
             "jump_length",
             "gradient_accumulation_steps",
             "proportionTrainingCircularMasks",
+            "use_min_snr_loss",
+            "snr_gamma",
             ] 
         texts = [
             "mixed_precision",
@@ -109,6 +129,8 @@ class Training(ABC):
             "add_lesion_technique",
             "dataset_train_path",
             "dataset_eval_path",
+            "restrict_train_slices",
+            "restrict_eval_slices",
             ] 
 
         for scalar in scalars:
@@ -143,8 +165,8 @@ class Training(ABC):
     
     def _save_logs(self, loss, total_norm):
         
-        logs = {"train_loss": loss.cpu().detach().item(), "lr": self.lr_scheduler.get_last_lr()[0], "step": self.global_step}
-        self.tb_summary.add_scalar("train_loss", logs["train_loss"], self.global_step)
+        logs = {"weighted_train_loss": loss.cpu().detach().item(), "lr": self.lr_scheduler.get_last_lr()[0], "step": self.global_step}
+        self.tb_summary.add_scalar("weighted_train_loss", logs["weighted_train_loss"], self.global_step)
         self.tb_summary.add_scalar("lr", logs["lr"], self.global_step)
         if total_norm:
             self.tb_summary.add_scalar("total_norm", total_norm, self.global_step) 
@@ -190,9 +212,17 @@ class Training(ABC):
                  
                 with self.accelerator.accumulate(self.model):
                     # Predict the noise residual
-                    
                     noise_pred = self.model(input, timesteps, return_dict=False)[0]
-                    loss = F.mse_loss(noise_pred, noise)
+
+                    if(self.min_snr_loss):
+                        mse_weights = self.loss_weights[timesteps]
+                        # mean over the non-batch dimensions, rebalance sample-wise losses with their respective loss weights and then take the mean
+                        loss = F.mse_loss(noise_pred, noise, reduction="none") 
+                        loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_weights 
+                        loss = loss.mean()
+                    else:
+                        loss = F.mse_loss(noise_pred, noise)
+
                     self.accelerator.backward(loss)
                     if self.accelerator.sync_gradients:
                         total_norm = self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
