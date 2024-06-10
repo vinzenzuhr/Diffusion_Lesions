@@ -12,9 +12,9 @@ class TrainingConfig:
     t1n_target_shape = None # will transform t1n during preprocessing (computationally expensive)
     unet_img_shape = (160,256)
     channels = 1
-    effective_train_batch_size=16  
-    eval_batch_size = 16
-    num_sorted_samples=1
+    effective_train_batch_size=3
+    train_batch_size = 1
+    eval_batch_size = 1 
     num_dataloader_workers = 8
     num_epochs = 1000 # one epoch needs ~12min (x2 GPU), because their are more training samples due connected_components
     gradient_accumulation_steps = 1
@@ -27,7 +27,7 @@ class TrainingConfig:
     evaluate_num_batches_3d = 2
     evaluate_3D_epochs = 1000  # one 3D evaluation needs ~20min 
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
-    output_dir = "lesion-synthesis-256-cond-mixture"  # the model name locally and on the HF Hub
+    output_dir = "lesion-synthesis-3D-filling-cond-mixture"  # the model name locally and on the HF Hub
     dataset_train_path = "./datasets/synthesis/dataset_train/imgs"
     segm_train_path = "./datasets/synthesis/dataset_train/segm"
     masks_train_path = "./datasets/synthesis/dataset_train/masks"
@@ -38,15 +38,17 @@ class TrainingConfig:
     eval_only_connected_masks=False
     num_inference_steps=50
     log_csv = False
-    add_lesion_technique = "other_lesions_99Quantile" # 'mean_intensity', 'other_lesions_1stQuantile', 'other_lesions_mean', 'other_lesions_median', 'other_lesions_3rdQuantile', 'other_lesions_99Quantile', 'empty'
-    add_lesion_mean_intensity = -0.5492 
-    intermediate_timestep = 3 # starting from this timesteps. num_inference_steps means the whole pipeline and 1 the last step. 
+    #add_lesion_technique = "other_lesions_99Quantile" # 'mean_intensity', 'other_lesions_1stQuantile', 'other_lesions_mean', 'other_lesions_median', 'other_lesions_3rdQuantile', 'other_lesions_99Quantile', 'empty'
+    #add_lesion_mean_intensity = -0.5492 
+    #intermediate_timestep = 3 # starting from this timesteps. num_inference_steps means the whole pipeline and 1 the last step. 
     mode = "train" # 'train', 'eval' or "tuning_parameters"
     debug = False
     brightness_augmentation = True
-    restrict_mask_to_wm=True
-    proportionTrainingCircularMasks = 0.5
+    restrict_mask_to_wm=False
+    proportionTrainingCircularMasks = 0
     eval_loss_timesteps=[20,80,140,200,260,320,380,440,560,620,680,740,800,860,920,980]
+    restrict_train_slices = "mask"
+    restrict_eval_slices = "mask"
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub
     #hub_model_id = "<your-username>/<my-awesome-model>"  # the name of the repository to create on the HF Hub
@@ -103,7 +105,7 @@ if config.debug:
 # In[6]:
 
 
-print(f"Start training with batch size {config.train_batch_size}, {config.gradient_accumulation_steps} accumulation steps and {config.num_processes} process(es)")
+print(f"Start training with batch size {config.num_sorted_samples}, {config.gradient_accumulation_steps} accumulation steps and {config.num_processes} process(es)")
 
 
 # In[7]:
@@ -119,9 +121,9 @@ if config.brightness_augmentation:
     transformations = transforms.RandomApply([ScaleDecorator(transforms.ColorJitter(brightness=1))], p=0.5)
 
 #create dataset
-datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), root_dir_masks=Path(config.masks_train_path), only_connected_masks=config.train_only_connected_masks, t1n_target_shape=config.t1n_target_shape, transforms=transformations, restrict_mask_to_wm=config.restrict_mask_to_wm)
-datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), root_dir_synthesis=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape)
-dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), root_dir_synthesis=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape)
+datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), restriction=config.restrict_train_slices, root_dir_masks=Path(config.masks_train_path), only_connected_masks=config.train_only_connected_masks, t1n_target_shape=config.t1n_target_shape, transforms=transformations, restrict_mask_to_wm=config.restrict_mask_to_wm, proportionTrainingCircularMasks=config.proportionTrainingCircularMasks, circleMaskShape=config.unet_img_shape)
+datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), restriction=config.restrict_eval_slices, root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape)
+dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape)
 
 
 # ### Prepare Training
@@ -130,7 +132,7 @@ dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), 
 
 
 #create model
-from diffusers import UNet2DModel
+from custom_modules import UNet2DModel
 
 model = UNet2DModel(
     sample_size=config.unet_img_shape,  # the target image resolution
@@ -139,24 +141,24 @@ model = UNet2DModel(
     layers_per_block=2,  # how many ResNet layers to use per UNet block
     block_out_channels=(128, 128, 256, 256, 512, 512),  # the number of output channels for each UNet block
     down_block_types=(
-        "DownBlock2D",  # a regular ResNet downsampling block
-        "DownBlock2D",
-        "DownBlock2D",
-        "DownBlock2D",
-        "AttnDownBlock2D",  # a ResNet downsampling block with spatial self-attention
-        "DownBlock2D",
+        "Pseudo3DDownBlock2D",  # a regular ResNet downsampling block
+        "Pseudo3DDownBlock2D",
+        "Pseudo3DDownBlock2D",
+        "Pseudo3DDownBlock2D",
+        "Pseudo3DAttnDownBlock2D",  # a ResNet downsampling block with spatial self-attention
+        "Pseudo3DAttnDownBlock2D",
     ),
     up_block_types=(
-        "UpBlock2D",  # a regular ResNet upsampling block
-        "AttnUpBlock2D",  # a ResNet upsampling block with spatial self-attention
-        "UpBlock2D",
-        "UpBlock2D",
-        "UpBlock2D",
-        "UpBlock2D",
+        "Pseudo3DAttnUpBlock2D",  # a regular ResNet upsampling block
+        "Pseudo3DAttnUpBlock2D",  # a ResNet upsampling block with spatial self-attention
+        "Pseudo3DUpBlock2D",
+        "Pseudo3DUpBlock2D",
+        "Pseudo3DUpBlock2D",
+        "Pseudo3DUpBlock2D",
     ),
 )
 
-config.model = "UNet2DModel"
+config.model = "BigPseudo3DUNet2DModel"
 
 
 # In[9]:
@@ -196,10 +198,8 @@ config.lr_scheduler = "cosine_schedule_with_warmup"
 # In[11]:
 
 
-from custom_modules import TrainingConditional, GuidedPipelineConditional, Evaluation2DSynthesis, Evaluation3DSynthesis
-from custom_modules import PipelineFactories
-
-config.conditional_data = "Mixture"
+from custom_modules import TrainingConditional, DDIMInpaintPipeline, Evaluation2DFilling, Evaluation3DFilling
+from custom_modules import PipelineFactories 
 
 args = {
     "config": config, 
@@ -210,9 +210,9 @@ args = {
     "datasetTrain": datasetTrain, 
     "datasetEvaluation": datasetEvaluation, 
     "dataset3DEvaluation": dataset3DEvaluation,  
-    "evaluation2D": Evaluation2DSynthesis,
-    "evaluation3D": Evaluation3DSynthesis, 
-    "pipelineFactory": PipelineFactories.get_guided_conditional_pipeline}
+    "evaluation2D": Evaluation2DFilling,
+    "evaluation3D": Evaluation3DFilling,
+    "pipelineFactory": PipelineFactories.get_ddim_inpaint_pipeline}
 trainingSynthesis = TrainingConditional(**args)
 
 
@@ -228,7 +228,7 @@ if config.mode == "train":
 
 if config.mode == "eval":
     trainingSynthesis.config.deactivate3Devaluation = False
-    pipeline = GuidedPipelineConditional.from_pretrained(config.output_dir) 
+    pipeline = DDIMInpaintPipeline.from_pretrained(config.output_dir) 
     trainingSynthesis.evaluate(pipeline, deactivate_save_model=True)
 
 

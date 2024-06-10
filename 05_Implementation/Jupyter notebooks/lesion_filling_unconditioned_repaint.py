@@ -12,12 +12,12 @@ class TrainingConfig:
     t1n_target_shape = None # will transform t1n during preprocessing (computationally expensive)
     unet_img_shape = (256,256)
     channels = 1
-    effective_train_batch_size=16 
-    eval_batch_size = 4  
+    effective_train_batch_size=32 
+    eval_batch_size = 16  
     num_sorted_samples = 1
     num_dataloader_workers = 8
-    evaluate_num_batches = 2 # one batch needs ~130s 
-    num_epochs = 350
+    evaluate_num_batches = 4 # one batch needs ~130s 
+    num_epochs = 270
     gradient_accumulation_steps = 1
     learning_rate = 1e-4
     lr_warmup_steps = 500
@@ -38,8 +38,8 @@ class TrainingConfig:
     eval_only_connected_masks=False 
     num_inference_steps=50 
     log_csv = False
-    mode = "eval" # train / eval
-    debug = True
+    mode = "train" # train / eval
+    debug = False
     jump_length=8
     jump_n_sample=10 
     brightness_augmentation = True
@@ -50,7 +50,11 @@ class TrainingConfig:
     #hub_private_repo = False
     #overwrite_output_dir = True  # overwrite the old model when re-running the notebook
     seed = 0
-    eval_loss_timesteps=[20,40,80,140]
+    eval_loss_timesteps= [20,80,140,200,260,320,380,440,560,620,680,740,800,860,920,980] #[20,40,80,140]
+    restrict_train_slices = "segm"
+    restrict_eval_slices = "mask"
+    use_min_snr_loss=True
+    snr_gamma=0.5
 config = TrainingConfig()
 
 
@@ -120,8 +124,8 @@ if config.brightness_augmentation:
     transformations = transforms.RandomApply([ScaleDecorator(transforms.ColorJitter(brightness=1))], p=0.5) 
 
 #create dataset
-datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), only_connected_masks=config.train_only_connected_masks, t1n_target_shape=config.t1n_target_shape, transforms=transformations)
-datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), root_dir_segm=Path(config.segm_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape, dilation=config.eval_mask_dilation)
+datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), restriction=config.restrict_train_slices, root_dir_segm=Path(config.segm_train_path), only_connected_masks=config.train_only_connected_masks, t1n_target_shape=config.t1n_target_shape, transforms=transformations)
+datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), restriction=config.restrict_eval_slices, root_dir_masks=Path(config.masks_eval_path), root_dir_segm=Path(config.segm_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape, dilation=config.eval_mask_dilation)
 dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), root_dir_segm=Path(config.segm_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape, dilation=config.eval_mask_dilation)
 
 
@@ -207,6 +211,7 @@ args = {
     "evaluation2D": Evaluation2DFilling,
     "evaluation3D": Evaluation3DFilling,
     "pipelineFactory": PipelineFactories.get_repaint_pipeline,
+    "min_snr_loss":config.use_min_snr_loss,
     "deactivate3Devaluation": config.deactivate3Devaluation,
     "evaluation_pipeline_parameters": {
                 "jump_length": config.jump_length,
@@ -238,4 +243,4 @@ if config.mode == "eval": # Nr. 17 has around ~80 2D slides with mask content
 print("Finished Training")
 
 
-# In[15]:
+# In[1]:
