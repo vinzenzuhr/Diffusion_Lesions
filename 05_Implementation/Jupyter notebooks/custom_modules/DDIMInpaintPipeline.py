@@ -3,22 +3,20 @@ A large part of the code originally comes from the official
 Huggingface Diffusers implementation 'huggingface/diffusers/src/diffusers/pipelines/ddim/pipeline_ddim.py' received from Github
 """
 
+from typing import List, Optional, Tuple, Union
+
 from diffusers import DiffusionPipeline, DDIMScheduler, ImagePipelineOutput
 from diffusers.utils.torch_utils import randn_tensor
-from typing import List, Optional, Tuple, Union
 import torch
 
 class DDIMInpaintPipeline(DiffusionPipeline):
     r"""
     Pipeline for image inpainting.
 
-    This model inherits from [`DiffusionPipeline`]. Check the superclass documentation for the generic methods
-    implemented for all pipelines (downloading, saving, running on a particular device, etc.).
-
-    Parameters:
-        unet ([`UNet2DModel`]):
+    Args:
+        unet (UNet2DModel):
             A `UNet2DModel` to denoise the encoded image latents.
-        scheduler ([`SchedulerMixin`]):
+        scheduler (SchedulerMixin):
             A scheduler to be used in combination with `unet` to denoise the encoded image. Can be one of
             [`DDPMScheduler`], or [`DDIMScheduler`].
     """
@@ -76,31 +74,31 @@ class DDIMInpaintPipeline(DiffusionPipeline):
                 returned where the first element is a list with the generated images
         """
 
-        batch_size = voided_imgs.shape[0]
+        # set step values
+        self.scheduler.set_timesteps(num_inference_steps)
 
-        # Sample gaussian noise to begin loop
+        
+
+        # Sample gaussian noise to begin loop. The second dimension represenenting the number of 
+        # channels is subtracted by 2 to account for the mask and the image to be inpainted.
+        batch_size = voided_imgs.shape[0]
         if isinstance(self.unet.config.sample_size, int):
             image_shape = (
                 batch_size,
-                self.unet.config.in_channels-2, # Minus the two channels for the mask and the img to be inpainted
+                self.unet.config.in_channels-2,
                 self.unet.config.sample_size,
                 self.unet.config.sample_size,
             )
         else:
-            image_shape = (batch_size, self.unet.config.in_channels-2, *self.unet.config.sample_size) # Minus the two channels for the mask and the img to be inpainted
-
+            image_shape = (batch_size, self.unet.config.in_channels-2, *self.unet.config.sample_size)
         if isinstance(generator, list) and len(generator) != batch_size:
             raise ValueError(
                 f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
                 f" size of {batch_size}. Make sure the batch size matches the length of the generators."
             )
-
         image = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)
 
-        # set step values
-        self.scheduler.set_timesteps(num_inference_steps)
-
-        #Input to unet model is concatenation of images, voided images and masks
+        # Inputs to the unet model are the gaussian noise images, the voided images and the binary masks
         input=torch.cat((image, voided_imgs, masks), dim=1)
 
         for t in self.scheduler.timesteps:
@@ -116,10 +114,8 @@ class DDIMInpaintPipeline(DiffusionPipeline):
 
             #3. Concatenate image with voided images and masks
             input=torch.cat((image, voided_imgs, masks), dim=1)
- 
 
-        
-        image = image.clamp(-1, 1)#.permute(0, 2, 3, 1)#.cpu().numpy() 
+        image = image.clamp(-1, 1)
 
         if not return_dict:
             return (image,)
