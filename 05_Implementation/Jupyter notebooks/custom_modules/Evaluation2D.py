@@ -12,7 +12,7 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 from torchvision.transforms.functional import to_pil_image
 from tqdm.auto import tqdm
 
-from custom_modules import EvaluationUtils, Training 
+from custom_modules import EvaluationUtils, ModelInputGenerator 
 
 class Evaluation2D(ABC):
     """
@@ -24,10 +24,11 @@ class Evaluation2D(ABC):
         train_dataloader (DataLoader): DataLoader for training dataset.
         tb_summary (SummaryWriter): SummaryWriter for logging metrics.
         accelerator (Accelerator): Accelerator object for distributed training.
+        model_input_generator (ModelInputGenerator): Generates the input for the model.
     """
 
     def __init__(self, config, eval_dataloader: DataLoader, train_dataloader: DataLoader, 
-                 tb_summary: SummaryWriter, accelerator: Accelerator):
+                 tb_summary: SummaryWriter, accelerator: Accelerator, model_input_generator: ModelInputGenerator):
         self.config = config 
         self.eval_dataloader = eval_dataloader 
         self.train_dataloader = train_dataloader
@@ -35,6 +36,7 @@ class Evaluation2D(ABC):
         self.accelerator = accelerator 
         self.lpips_metric = LearnedPerceptualImagePatchSimilarity(net_type='alex').to(self.accelerator.device)
         self.best_ssim = float("inf")
+        self.model_input_generator = model_input_generator
 
     def _calc_lpip(self, images_1: torch.Tensor, images_2: torch.Tensor) -> torch.Tensor:
         """
@@ -72,15 +74,14 @@ class Evaluation2D(ABC):
         """
         pass
 
-    def evaluate(self, pipeline: DiffusionPipeline, global_step: int, _get_training_input: Training._get_training_input, 
+    def evaluate(self, pipeline: DiffusionPipeline, global_step: int, 
                  parameters: dict = {}, deactivate_save_model: bool = False) -> None:
         """
         Evaluate the diffusion pipeline and calculate metrics.
 
         Args:
             pipeline (DiffusionPipeline): Diffusion pipeline object.
-            global_step (int): Global step for logging.
-            _get_training_input (function): Function for getting training input.
+            global_step (int): Global step for logging. 
             parameters (dict, optional): Additional parameters for the pipeline. Defaults to {}.
             deactivate_save_model (bool, optional): Whether to deactivate saving the model. Defaults to False.
         """
@@ -101,7 +102,7 @@ class Evaluation2D(ABC):
             if n_iter >= max_iter:
                 break    
             timesteps = torch.tensor(self.config.eval_loss_timesteps, dtype=torch.int, device=self.accelerator.device)
-            input, noise, timesteps = _get_training_input(batch_train, generator=eval_generator, timesteps=timesteps)
+            input, noise, timesteps = self.model_input_generator.get_model_input(batch_train, generator=eval_generator, timesteps=timesteps)
             noise_pred = pipeline.unet(input, timesteps, return_dict=False)[0]
             for i, t in enumerate(timesteps):
                 loss = F.mse_loss(noise_pred[i], noise[i])
@@ -124,7 +125,7 @@ class Evaluation2D(ABC):
         
         for n_iter, batch in enumerate(self.eval_dataloader):
             # Measure validation loss  
-            input, noise, timesteps = _get_training_input(batch, generator=eval_generator)
+            input, noise, timesteps = self.model_input_generator.get_model_input(batch, generator=eval_generator)
             noise_pred = pipeline.unet(input, timesteps, return_dict=False)[0]
             loss = F.mse_loss(noise_pred, noise)
             all_loss = self.accelerator.gather_for_metrics(loss).mean() 
@@ -133,7 +134,7 @@ class Evaluation2D(ABC):
 
             # Measure validation loss for specific timesteps
             timesteps = torch.tensor(self.config.eval_loss_timesteps, dtype=torch.int, device=self.accelerator.device)
-            input, noise, timesteps = _get_training_input(batch, generator=eval_generator, timesteps=timesteps)
+            input, noise, timesteps = self.model_input_generator.get_model_input(batch, generator=eval_generator, timesteps=timesteps)
             noise_pred = pipeline.unet(input, timesteps, return_dict=False)[0]
             for i, t in enumerate(timesteps):
                 loss = F.mse_loss(noise_pred[i], noise[i])

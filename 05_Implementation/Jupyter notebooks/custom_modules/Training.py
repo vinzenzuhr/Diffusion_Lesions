@@ -13,8 +13,8 @@ from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import LRScheduler 
 from tqdm.auto import tqdm
 
-from custom_modules import get_dataloader, DatasetMRI2D, DatasetMRI3D, Evaluation2D, Evaluation3D
-import pseudo3D
+from custom_modules import get_dataloader, DatasetMRI2D, DatasetMRI3D, ModelInputGenerator, Evaluation2D, Evaluation3D
+from . import pseudo3D
 
 class Training(ABC):
     """
@@ -30,9 +30,7 @@ class Training(ABC):
         lr_scheduler (LRScheduler): The learning rate scheduler used for adjusting the learning rate during training.
         datasetTrain (DatasetMRI2D): The training dataset.
         datasetEvaluation (DatasetMRI2D): The evaluation dataset for 2D images.
-        dataset3DEvaluation (DatasetMRI3D): The evaluation dataset for 3D images.
-        evaluation2D (Evaluation2D): The evaluation object for 2D images, used for computing metrics.
-        evaluation3D (Evaluation3D): The evaluation object for 3D images, used for computing metrics.
+        dataset3DEvaluation (DatasetMRI3D): The evaluation dataset for 3D images. 
         pipelineFactory (Callable[[Union[diffusers.UNet2DModel, pseudo3D.UNet2DModel], Union[DDIMScheduler, DDPMScheduler]], DiffusionPipeline]): 
             A callable that creates a diffusion pipeline given the model and noise scheduler.
         sorted_slice_sample_size (int): The number of sorted slices within one sample from the Dataset. 
@@ -51,12 +49,14 @@ class Training(ABC):
             datasetTrain: DatasetMRI2D, 
             datasetEvaluation: DatasetMRI2D, 
             dataset3DEvaluation: DatasetMRI3D, 
-            evaluation2D: Evaluation2D, 
-            evaluation3D: Evaluation3D, 
             pipelineFactory: Callable[[Union[diffusers.UNet2DModel, pseudo3D.UNet2DModel], Union[DDIMScheduler, DDPMScheduler]], DiffusionPipeline],
             sorted_slice_sample_size: int = 1,
             min_snr_loss: bool = False,
             ):
+        self.model_input_generator : ModelInputGenerator
+        self.evaluation2D : Evaluation2D
+        self.evaluation3D : Evaluation3D
+
         self.config = config
         self.model = model
         self.noise_scheduler = noise_scheduler
@@ -92,18 +92,6 @@ class Training(ABC):
         self.model, self.optimizer, self.train_dataloader, self.d2_eval_dataloader, self.d3_eval_dataloader, self.lr_scheduler = self.accelerator.prepare(
             self.model, self.optimizer, self.train_dataloader, self.d2_eval_dataloader, self.d3_eval_dataloader, self.lr_scheduler
         )
- 
-        self.evaluation2D = evaluation2D(
-            config,  
-            self.d2_eval_dataloader, 
-            self.train_dataloader,
-            None if not self.accelerator.is_main_process else self.tb_summary, 
-            self.accelerator)
-        self.evaluation3D = evaluation3D(
-            config,  
-            self.d3_eval_dataloader, 
-            None if not self.accelerator.is_main_process else self.tb_summary, 
-            self.accelerator)
 
         os.makedirs(config.output_dir, exist_ok=True)  #maybe delete
 
@@ -204,57 +192,7 @@ class Training(ABC):
         if total_norm:
             self.tb_summary.add_scalar("total_norm", total_norm, self.global_step) 
 
-        self.progress_bar.set_postfix(**logs)
-
-    def _get_noisy_images(self, clean_images: torch.tensor, generator: torch.Generator = None, 
-                          timesteps: torch.tensor = None) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
-        """
-        Generates noisy images by adding random gaussian noise to the clean images. 
-
-        Args:
-            clean_images (torch.tensor): The clean images to add noise to.
-            generator (torch.Generator, optional): The random number generator. Defaults to None.
-            timesteps (torch.tensor, optional): Predefined timesteps for diffusing each image. 
-                Defaults to None.
-
-        Returns:
-            tuple[torch.tensor, torch.tensor, torch.tensor]: A tuple containing the noisy images, 
-                the used noise, and the timesteps.
-        """
-        
-        # Sample noise to add to the images 
-        noise = torch.randn(clean_images.shape, device=clean_images.device, generator=generator)
-        bs = clean_images.shape[0]
-
-        # Sample a random timestep for each image
-        if timesteps is None:
-            timesteps = torch.randint(
-                0, self.noise_scheduler.config.num_train_timesteps, (bs,), device=clean_images.device,
-                dtype=torch.int64, generator=generator
-            )
-        assert timesteps.shape[0] == bs 
-
-        # Add noise to the voided images according to the noise magnitude at each timestep (forward diffusion process)
-        noisy_images = self.noise_scheduler.add_noise(clean_images, noise, timesteps) 
-        
-        return noisy_images, noise, timesteps
-
-    @abstractmethod
-    def _get_training_input(self, batch: torch.tensor, generator: torch.Generator = None, timesteps: torch.tensor = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Get the training input for the model.
-
-        Args:
-            batch (torch.tensor): The input batch of data.
-            generator (torch.Generator, optional): The random number generator. Defaults to None.
-            timesteps (torch.tensor, optional): Predefined timesteps for diffusing each image. 
-                Defaults to None.
-
-        Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing the input for the model, 
-                the sampled noise, and the used timesteps.
-        """
-        pass
+        self.progress_bar.set_postfix(**logs) 
 
     @abstractmethod
     def evaluate(self, pipeline: DiffusionPipeline = None, deactivate_save_model: bool = False):
@@ -276,7 +214,7 @@ class Training(ABC):
             self.model.train() 
             for batch in self.train_dataloader:
 
-                input, noise, timesteps = self._get_training_input(batch)
+                input, noise, timesteps = self.model_input_generator.get_model_input(batch)
                  
                 with self.accelerator.accumulate(self.model):
                     # Predict the noise residual

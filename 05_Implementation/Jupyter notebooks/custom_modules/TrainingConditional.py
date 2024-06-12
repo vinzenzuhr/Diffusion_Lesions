@@ -7,8 +7,8 @@ from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import LRScheduler  
 
  
-from custom_modules import Training, DatasetMRI2D, DatasetMRI3D, Evaluation2D, Evaluation3D
-import pseudo3D
+from custom_modules import Training, DatasetMRI2D, DatasetMRI3D, Evaluation2D, Evaluation3D, ModelInputGenerator
+from . import pseudo3D
 
 class TrainingConditional(Training):
     """
@@ -50,36 +50,24 @@ class TrainingConditional(Training):
             pipelineFactory: Callable[[Union[diffusers.UNet2DModel, pseudo3D.UNet2DModel], Union[DDIMScheduler, DDPMScheduler]], DiffusionPipeline], 
             sorted_slice_sample_size: int = 1, 
             min_snr_loss: bool = False, 
-            ):
+            ): 
         super().__init__(config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, 
-                         datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, 
-                         pipelineFactory, sorted_slice_sample_size, min_snr_loss)
-
-    def _get_training_input(self, batch: torch.tensor, generator: torch.Generator = None, 
-                            timesteps: torch.tensor = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Get the training input for the model.
-
-        The input for the model consists of the noisy images and the concatenation of the voided images and masks to be conditioned.
-
-        Args:
-            batch (torch.tensor): The input batch of data.
-            generator (torch.Generator, optional): The random number generator. Defaults to None.
-            timesteps (torch.tensor, optional): Predefined timesteps for diffusing each image. 
-                Defaults to None.
-
-        Returns:
-            A tuple containing the input, noise, and timesteps.
-
-        """
-        clean_images = batch["gt_image"] 
-        masks = batch["mask"] 
-        noisy_images, noise, timesteps = self._get_noisy_images(clean_images, generator, timesteps)
-
-        voided_images = clean_images*(1-masks)
+                         datasetEvaluation, dataset3DEvaluation, pipelineFactory, 
+                         sorted_slice_sample_size, min_snr_loss) 
+        self.model_input_generator = ModelInputGenerator(True, noise_scheduler)
  
-        input=torch.cat((noisy_images, voided_images, masks), dim=1)
-        return input, noise, timesteps
+        self.evaluation2D = evaluation2D(
+            config,  
+            self.d2_eval_dataloader, 
+            self.train_dataloader,
+            None if not self.accelerator.is_main_process else self.tb_summary, 
+            self.accelerator,
+            self.model_input_generator)
+        self.evaluation3D = evaluation3D(
+            config,  
+            self.d3_eval_dataloader, 
+            None if not self.accelerator.is_main_process else self.tb_summary, 
+            self.accelerator)
 
     def evaluate(self, pipeline: DiffusionPipeline = None, deactivate_save_model: bool = False):
         """
@@ -101,8 +89,7 @@ class TrainingConditional(Training):
         if not self.config.deactivate2Devaluation and ((self.epoch) % self.config.evaluate_epochs == 0 or self.epoch == self.config.num_epochs - 1): 
             self.evaluation2D.evaluate(
                 pipeline, 
-                self.global_step, 
-                self._get_training_input, 
+                self.global_step,  
                 parameters = {},
                 deactivate_save_model=deactivate_save_model)
 

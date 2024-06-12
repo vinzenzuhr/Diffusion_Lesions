@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from custom_modules import Evaluation2D
+from custom_modules import Evaluation2D, ModelInputGenerator
 
 class Evaluation2DFilling(Evaluation2D):
     """
@@ -17,11 +17,12 @@ class Evaluation2DFilling(Evaluation2D):
         train_dataloader (DataLoader): DataLoader for training dataset.
         tb_summary (SummaryWriter): SummaryWriter for logging metrics.
         accelerator (Accelerator): Accelerator object for distributed training.
+        model_input_generator (ModelInputGenerator): Generates the input for the model.
     """
 
     def __init__(self, config, eval_dataloader: DataLoader, train_dataloader: DataLoader, 
-                 tb_summary: SummaryWriter, accelerator: Accelerator):
-        super().__init__(config, eval_dataloader, train_dataloader, tb_summary, accelerator) 
+                 tb_summary: SummaryWriter, accelerator: Accelerator, model_input_generator: ModelInputGenerator):
+        super().__init__(config, eval_dataloader, train_dataloader, tb_summary, accelerator, model_input_generator) 
     
     def _get_image_lists(self, images: torch.tensor, clean_images: torch.tensor, masks: torch.tensor, 
                          batch: torch.tensor) -> tuple[list[torch.tensor, torch.tensor, torch.tensor, torch.tensor], list[str, str, str, str]]:

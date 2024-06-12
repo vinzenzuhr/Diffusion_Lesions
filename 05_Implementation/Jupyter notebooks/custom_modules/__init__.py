@@ -12,6 +12,14 @@ from .GuidedPipelineUnconditional import GuidedPipelineUnconditional
 
 from .DDIMInpaintPipeline import DDIMInpaintPipeline
 
+from .ModelInputGenerator import ModelInputGenerator
+
+from .Training import Training
+
+from .TrainingConditional import TrainingConditional
+
+from .TrainingUnconditional import TrainingUnconditional
+
 from .Evaluation2D import Evaluation2D 
 
 from .Evaluation2DFilling import Evaluation2DFilling
@@ -29,12 +37,6 @@ from .GuidedRePaintPipeline import GuidedRePaintPipeline
 from .pseudo3D import UNet2DModel
 
 from .RePaintPipeline import RePaintPipeline
-
-from .Training import Training
-
-from .TrainingConditional import TrainingConditional
-
-from .TrainingUnconditional import TrainingUnconditional
 
 from .transform_utils import ScaleDecorator
 

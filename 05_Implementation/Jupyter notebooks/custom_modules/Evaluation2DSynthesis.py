@@ -4,23 +4,24 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from custom_modules import Evaluation2D, EvaluationUtils
+from custom_modules import Evaluation2D, EvaluationUtils, ModelInputGenerator
 
 class Evaluation2DSynthesis(Evaluation2D):
     """
     Class for evaluating the performance of a diffusion pipeline in 2D specific for the use case 'lesion synthesis'.
-
+     
     Args:
         config (object): Configuration object containing evaluation settings.
         eval_dataloader (DataLoader): DataLoader for evaluation dataset.
         train_dataloader (DataLoader): DataLoader for training dataset.
         tb_summary (SummaryWriter): SummaryWriter for logging metrics.
         accelerator (Accelerator): Accelerator object for distributed training.
+        model_input_generator (ModelInputGenerator): Generates the input for the model.
     """
 
     def __init__(self, config, eval_dataloader: DataLoader, train_dataloader: DataLoader, 
-                 tb_summary: SummaryWriter, accelerator: Accelerator):
-        super().__init__(config, eval_dataloader, train_dataloader, tb_summary, accelerator)
+                 tb_summary: SummaryWriter, accelerator: Accelerator, model_input_generator: ModelInputGenerator):
+        super().__init__(config, eval_dataloader, train_dataloader, tb_summary, accelerator, model_input_generator)
 
     def _add_coarse_lesions(self, clean_images: torch.tensor, batch: torch.tensor) -> tuple[torch.tensor, torch.tensor]:
         """

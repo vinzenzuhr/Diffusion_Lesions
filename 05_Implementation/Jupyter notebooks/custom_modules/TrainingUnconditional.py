@@ -8,8 +8,8 @@ import torch
 from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import LRScheduler  
 
-from custom_modules import Training, EvaluationUtils, DatasetMRI2D, DatasetMRI3D, Evaluation2D, Evaluation3D
-import pseudo3D
+from custom_modules import Training, EvaluationUtils, DatasetMRI2D, DatasetMRI3D, Evaluation2D, Evaluation3D, ModelInputGenerator
+from . import pseudo3D
 
 
 class TrainingUnconditional(Training):
@@ -54,33 +54,27 @@ class TrainingUnconditional(Training):
             min_snr_loss: bool = False, 
             deactivate3Devaluation: bool = True, 
             evaluation_pipeline_parameters: dict = {},
-            ):
+            ): 
         super().__init__(config, model, noise_scheduler, optimizer, lr_scheduler, datasetTrain, 
-                         datasetEvaluation, dataset3DEvaluation, evaluation2D, evaluation3D, 
-                         pipelineFactory, sorted_slice_sample_size, min_snr_loss)
+                         datasetEvaluation, dataset3DEvaluation, pipelineFactory, 
+                         sorted_slice_sample_size, min_snr_loss)
         self.deactivate3Devaluation = deactivate3Devaluation
         self.evaluation_pipeline_parameters = evaluation_pipeline_parameters 
-
-    def _get_training_input(self, batch: torch.tensor, generator: torch.Generator = None, 
-                            timesteps: torch.tensor = None) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
-        """
-        Get the training input for the model.
-
-        The input for the model consists of the noisy images.
-
-        Args:
-            batch (torch.tensor): The input batch of data.
-            generator (torch.Generator, optional): The random number generator. Defaults to None.
-            timesteps (torch.tensor, optional): Predefined timesteps for diffusing each image. 
-                Defaults to None.
-
-        Returns:
-            A tuple containing the noisy images, noise, and timesteps.
-        """
-        clean_images = batch["gt_image"]
-        noisy_images, noise, timesteps = self._get_noisy_images(clean_images, generator, timesteps)
         
-        return noisy_images, noise, timesteps
+        self.model_input_generator = ModelInputGenerator(False, noise_scheduler)
+ 
+        self.evaluation2D = evaluation2D(
+            config,  
+            self.d2_eval_dataloader, 
+            self.train_dataloader,
+            None if not self.accelerator.is_main_process else self.tb_summary, 
+            self.accelerator,
+            self.model_input_generator)
+        self.evaluation3D = evaluation3D(
+            config,  
+            self.d3_eval_dataloader, 
+            None if not self.accelerator.is_main_process else self.tb_summary, 
+            self.accelerator)
     
     def _save_unconditional_img(self, unet):
         """
@@ -115,8 +109,7 @@ class TrainingUnconditional(Training):
             if not self.config.deactivate2Devaluation:
                 self.evaluation2D.evaluate(
                     pipeline, 
-                    self.global_step, 
-                    self._get_training_input,
+                    self.global_step,  
                     parameters = self.evaluation_pipeline_parameters,
                     deactivate_save_model=deactivate_save_model)
             self._save_unconditional_img(pipeline.unet)
