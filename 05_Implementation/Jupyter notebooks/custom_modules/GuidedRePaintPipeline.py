@@ -1,45 +1,16 @@
-# Copyright 2024 ETH Zurich Computer Vision Lab and The HuggingFace Team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
+"""
+A large part of the code originally comes from the official 
+Huggingface Diffusers implementation 'huggingface/diffusers/blob/main/src/diffusers/pipelines/deprecated/repaint/pipeline_repaint.py' received from Github
+"""
 
 from typing import List, Optional, Tuple, Union
 
-import numpy as np
-import PIL.Image
 import torch
-
-from diffusers import UNet2DModel, RePaintScheduler, DiffusionPipeline, ImagePipelineOutput, DDIMScheduler
-from diffusers.utils import PIL_INTERPOLATION, deprecate, logging
+from diffusers import UNet2DModel, RePaintScheduler, DiffusionPipeline, ImagePipelineOutput
+from diffusers.utils import logging
 from diffusers.utils.torch_utils import randn_tensor  
 
-logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
-
-def _num_timesteps(num_inference_steps, jump_length, jump_n_sample):
-    n=0
-    jumps = {}
-    for j in range(0, num_inference_steps - jump_length, jump_length):
-        jumps[j] = jump_n_sample - 1
-    t = num_inference_steps
-    while t >= 1:
-        t = t - 1 
-        n+=1
-
-        if jumps.get(t, 0) > 0:
-            jumps[t] = jumps[t] - 1
-            for _ in range(jump_length):
-                t = t + 1 
-                n+=1
+logger = logging.get_logger(__name__)  # pylint: disable=invalid-name 
 
 class GuidedRePaintPipeline(DiffusionPipeline):
     r"""
@@ -74,7 +45,6 @@ class GuidedRePaintPipeline(DiffusionPipeline):
         jump_length: int = 10,
         jump_n_sample: int = 10,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-        output_type: Optional[str] = "pil",
         return_dict: bool = True,
     ) -> Union[ImagePipelineOutput, Tuple]:
         r"""
@@ -102,8 +72,6 @@ class GuidedRePaintPipeline(DiffusionPipeline):
             generator (`torch.Generator`, *optional*):
                 A [`torch.Generator`](https://pytorch.org/docs/stable/generated/torch.Generator.html) to make
                 generation deterministic.
-            output_type (`str`, `optional`, defaults to `"pil"`):
-                The output format of the generated image. Choose between `PIL.Image` or `np.array`.
             return_dict (`bool`, *optional*, defaults to `True`):
                 Whether or not to return a [`ImagePipelineOutput`] instead of a plain tuple.
 
@@ -156,29 +124,26 @@ class GuidedRePaintPipeline(DiffusionPipeline):
         #invert mask to fit original implementation of repaint
         mask_image = 1-mask_image 
 
-        batch_size = guiding_imgs.shape[0]
+        # set step values
+        self.scheduler.set_timesteps(num_inference_steps, jump_length, jump_n_sample, self._execution_device)
+        self.scheduler.eta = eta
 
         # sample gaussian noise to begin the loop
+        batch_size = guiding_imgs.shape[0]
         if isinstance(generator, list) and len(generator) != batch_size:
             raise ValueError(
                 f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
                 f" size of {batch_size}. Make sure the batch size matches the length of the generators."
             )
-
         image_shape = guiding_imgs.shape 
         noise = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)
 
-        # set step values
-        self.scheduler.set_timesteps(num_inference_steps, jump_length, jump_n_sample, self._execution_device)
-        self.scheduler.eta = eta
-
+        # create noisy images at given timestep
         t_last = self.scheduler.timesteps[0] + 1
-        
         reverse_timestep = num_inference_steps - timestep
         repaint_timestep = int(len(self.scheduler.timesteps) / num_inference_steps * reverse_timestep)
         self.ddim_scheduler.set_timesteps(num_inference_steps)
         DDPM_timestep = self.ddim_scheduler.timesteps[reverse_timestep] 
-
         image = self.ddim_scheduler.add_noise(guiding_imgs, noise, DDPM_timestep)
 
         generator = generator[0] if isinstance(generator, list) else generator    

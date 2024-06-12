@@ -3,22 +3,20 @@ A large part of the code originally comes from the official
 Huggingface Diffusers implementation 'huggingface/diffusers/src/diffusers/pipelines/ddim/pipeline_ddim.py' received from Github
 """
 
+from typing import List, Optional, Tuple, Union
+
 from diffusers import DiffusionPipeline, DDIMScheduler, ImagePipelineOutput
 from diffusers.utils.torch_utils import randn_tensor
-from typing import List, Optional, Tuple, Union
 import torch
 
 class GuidedPipelineConditional(DiffusionPipeline):
     r"""
     Pipeline to add noise to a given image (guide) and then denoise it.  
 
-    This model inherits from [`DiffusionPipeline`]. Check the superclass documentation for the generic methods
-    implemented for all pipelines (downloading, saving, running on a particular device, etc.).
-
     Parameters:
-        unet ([`UNet2DModel`]):
+        unet (UNet2DModel):
             A `UNet2DModel` to denoise the encoded image latents.
-        scheduler ([`SchedulerMixin`]):
+        scheduler (schedulerMixin):
             A scheduler to be used in combination with `unet` to add and remove noise. Can be one of
             [`DDPMScheduler`], or [`DDIMScheduler`].
     """
@@ -67,38 +65,37 @@ class GuidedPipelineConditional(DiffusionPipeline):
                 expense of slower inference.
             use_clipped_model_output (`bool`, *optional*, defaults to `None`):
                 If `True` or `False`, see documentation for [`DDIMScheduler.step`]. If `None`, nothing is passed
-                downstream to the scheduler (use `None` for schedulers which don't support this argument).
-            output_type (`str`, *optional*, defaults to `"pil"`):
-                The output format of the generated image. Choose between `PIL.Image` or `np.array`.
+                downstream to the scheduler (use `None` for schedulers which don't support this argument). 
             return_dict (`bool`, *optional*, defaults to `True`):
                 Whether or not to return a [`~pipelines.ImagePipelineOutput`] instead of a plain tuple.
+
+        Returns:
+            [`~pipelines.ImagePipelineOutput`] or `tuple`:
+                If `return_dict` is `True`, [`~pipelines.ImagePipelineOutput`] is returned, otherwise a `tuple` is
+                returned where the first element is a list with the generated images
         """
 
-        batch_size = guiding_imgs.shape[0]
+        # set number of inference timesteps
+        self.scheduler.set_timesteps(num_inference_steps)
 
-        # Sample gaussian noise to begin loop
+        # Sample gaussian noise to begin loop. The second dimension represenenting the number of 
+        # channels is subtracted by 2 to account for the mask and the image to be inpainted.
+        batch_size = guiding_imgs.shape[0]
         if isinstance(self.unet.config.sample_size, int):
             image_shape = (
                 batch_size,
-                self.unet.config.in_channels-2, # Minus the two channels for the mask and the img to be inpainted 
+                self.unet.config.in_channels-2, 
                 self.unet.config.sample_size,
                 self.unet.config.sample_size,
             )
         else:
-            image_shape = (batch_size, self.unet.config.in_channels-2, *self.unet.config.sample_size) # Minus the two channels for the mask and the img to be inpainted
-
+            image_shape = (batch_size, self.unet.config.in_channels-2, *self.unet.config.sample_size) 
         if isinstance(generator, list) and len(generator) != batch_size:
             raise ValueError(
                 f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
                 f" size of {batch_size}. Make sure the batch size matches the length of the generators."
-            )
-
-        noise = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)
-
-        #noise = torch.randn(guiding_imgs.shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)  
-
-        # set number of inference timesteps
-        self.scheduler.set_timesteps(num_inference_steps)
+            ) 
+        noise = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype) 
 
         # create noisy images at given timestep
         reverse_timestep = num_inference_steps - timestep
@@ -119,12 +116,11 @@ class GuidedPipelineConditional(DiffusionPipeline):
                 model_output, t, image, eta=eta, use_clipped_model_output=use_clipped_model_output, generator=generator
             ).prev_sample   
 
-            
             #3. Concatenate image with guiding images and masks
             input=torch.cat((image, guiding_imgs, mask_image), dim=1)
 
         
-        image = image.clamp(-1, 1)#.permute(0, 2, 3, 1)#.cpu().numpy() 
+        image = image.clamp(-1, 1)
 
         if not return_dict:
             return (image,)

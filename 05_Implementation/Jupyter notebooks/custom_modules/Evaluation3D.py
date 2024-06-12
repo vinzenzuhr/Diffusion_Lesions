@@ -1,14 +1,30 @@
-from custom_modules import EvaluationUtils, DatasetMRI
-
-from abc import ABC, abstractmethod
-import math
-import numpy as np
+from abc import ABC, abstractmethod 
 import os
-import torch
+
+from accelerate import Accelerator 
+from diffusers import DiffusionPipeline
+import torch 
+from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 
+from custom_modules import EvaluationUtils, DatasetMRI
+
 class Evaluation3D(ABC):
-    def __init__(self, config, dataloader, tb_summary, accelerator):
+    """
+    Abstract class for evaluating the performance of a 2D diffusion pipeline with 3D images.
+
+    For evaluation the 3D images are sliced in 2D images and processed with the 2D pipeline. 
+    The processed 2D images are then combined to a 3D image and metrics are calculated.
+
+    Args:
+        config (object): Configuration object containing evaluation settings.
+        dataloader (DataLoader): DataLoader object for loading 3D evaluation data.
+        tb_summary (SummaryWriter): SummaryWriter for logging metrics.
+        accelerator (Accelerator): Accelerator object for distributed training.
+    """
+
+    def __init__(self, config, dataloader: DataLoader, tb_summary: SummaryWriter, accelerator: Accelerator): 
         self.config = config 
         self.dataloader = dataloader
         self.tb_summary = tb_summary
@@ -19,10 +35,29 @@ class Evaluation3D(ABC):
         os.makedirs(segmentation_dir, exist_ok=True) 
 
     @abstractmethod
-    def _start_pipeline(self, clean_images, masks, parameters):
+    def _start_pipeline(self, clean_images: torch.tensor, masks: torch.tensor, parameters: dict):
+        """
+        Abstract method to start the pipeline for 3D evaluation.
+
+        Args:
+            clean_images: The clean images tensor.
+            masks: The masks tensor.
+            parameters: The dictionary of parameters.
+
+        Returns:
+            The processed images, clean images, slice indices, and masks.
+        """
         pass
     
-    def evaluate(self, pipeline, global_step, parameters={}):
+    def evaluate(self, pipeline: DiffusionPipeline, global_step: int, parameters: dict = {}):
+        """
+        Evaluate the diffusion pipeline and calculate metrics for 3D images.
+
+        Args:
+            pipeline: The diffusion pipeline object.
+            global_step: The global step for logging.
+            parameters: The dictionary of parameters for the evaluation.
+        """
         #initialize metrics 
         if self.accelerator.is_local_main_process:
             metrics = dict()
@@ -30,14 +65,11 @@ class Evaluation3D(ABC):
             for metric in metric_list:
                 metrics[metric] = 0
             num_iterations = 0
-
-        
         self.progress_bar = tqdm(total=len(self.dataloader), disable=not self.accelerator.is_local_main_process) 
         self.progress_bar.set_description(f"Evaluation 3D")
  
         print("Start 3D evaluation")
         for n_iter, batch in enumerate(self.dataloader): 
-            # go through sample in batch
             for sample_idx in torch.arange(batch["gt_image"].shape[0]):
                 
                 idx = batch["idx"][sample_idx]
@@ -53,7 +85,6 @@ class Evaluation3D(ABC):
                 #calculate metrics 
                 if self.accelerator.is_local_main_process:
                     new_metrics = EvaluationUtils.calc_metrics(clean_images, final_3d_images, masks) 
-
                     for key, value in new_metrics.items(): 
                         metrics[key] += value 
                     num_iterations += 1
@@ -66,7 +97,7 @@ class Evaluation3D(ABC):
 
             self.progress_bar.update(1)
             
-            if (self.config.evaluate_num_batches_3d != -1) and (n_iter >= self.config.evaluate_num_batches_3d-1):
+            if (self.config.evaluate_num_batches_3d != -1) and (n_iter >= self.config.evaluate_num_batches_3d - 1):
                 break 
         
         #log metrics
@@ -81,5 +112,4 @@ class Evaluation3D(ABC):
                 dim3_metrics[f"{key}_3D"] = value
 
             EvaluationUtils.log_metrics(self.tb_summary, global_step, dim3_metrics, self.config)
-
         print("3D evaluation finished")

@@ -84,7 +84,7 @@ class DatasetMRI3D(DatasetMRI):
                 else:
                     break
  
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> dict:
         """
         Retrieves the item at the given index.
 
@@ -149,7 +149,7 @@ class DatasetMRI3D(DatasetMRI):
         } 
         return sample_dict
     
-    def _get_relevant_components(self, path_mask, path_img, path_segm):
+    def _get_relevant_components(self, path_mask, path_img, path_segm) -> tuple[str, list[int]]:
         """
         Retrieves the relevant connected components.
 

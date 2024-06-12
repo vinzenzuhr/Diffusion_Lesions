@@ -149,7 +149,7 @@ def get_dataloader(
         num_workers: int = 8, 
         random_sampler: bool = False, 
         seed: int = 0, 
-        multi_sample: bool = False) -> DataLoader:
+        multi_slice: bool = False) -> DataLoader:
     """
     Returns a PyTorch DataLoader object for the given dataset. 
 
@@ -161,8 +161,9 @@ def get_dataloader(
         random_sampler (bool, optional): Whether to use a random sampler for the dataset. 
             Defaults to False.
         seed (int, optional): The seed value for the random sampler. Defaults to 0.
-        multi_sample (bool, optional): Whether to use a custom collate function for datasets 
-            where the whole batch is inside one sample. Defaults to False.
+        multi_slice (bool, optional): A boolean indicating whether the dataset contains
+            more than one slice per sample. This would be the case for the pseudo3Dmodels, 
+            where the model expects sorted slices within one sample. Defaults to False. 
 
     Returns:
         DataLoader: A PyTorch DataLoader object for the given dataset.
@@ -172,5 +173,5 @@ def get_dataloader(
         dataset, generator=(None if random_sampler else torch.Generator().manual_seed(seed)))
     dl = DataLoader(dataset, batch_size=batch_size, num_workers=num_workers, 
                     sampler=sampler, pin_memory=True, 
-                    collate_fn=collate_multi_sample if multi_sample else default_collate)
+                    collate_fn=collate_multi_sample if multi_slice else default_collate)
     return dl

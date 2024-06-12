@@ -62,9 +62,7 @@ class DDIMInpaintPipeline(DiffusionPipeline):
                 expense of slower inference.
             use_clipped_model_output (`bool`, *optional*, defaults to `None`):
                 If `True` or `False`, see documentation for [`DDIMScheduler.step`]. If `None`, nothing is passed
-                downstream to the scheduler (use `None` for schedulers which don't support this argument).
-            output_type (`str`, *optional*, defaults to `"pil"`):
-                The output format of the generated image. Choose between `PIL.Image` or `np.array`.
+                downstream to the scheduler (use `None` for schedulers which don't support this argument). 
             return_dict (`bool`, *optional*, defaults to `True`):
                 Whether or not to return a [`~pipelines.ImagePipelineOutput`] instead of a plain tuple.
 
@@ -76,8 +74,6 @@ class DDIMInpaintPipeline(DiffusionPipeline):
 
         # set step values
         self.scheduler.set_timesteps(num_inference_steps)
-
-        
 
         # Sample gaussian noise to begin loop. The second dimension represenenting the number of 
         # channels is subtracted by 2 to account for the mask and the image to be inpainted.

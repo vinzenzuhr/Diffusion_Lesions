@@ -1,38 +1,61 @@
-from custom_modules import get_dataloader
-
 from abc import ABC, abstractmethod
-from accelerate import Accelerator
-import numpy as np
 import os
-import random
-import torch
-from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DataLoader
-from torch.utils.data import RandomSampler 
+from typing import Union, Callable
+
+from accelerate import Accelerator 
+import diffusers 
 from diffusers.training_utils import compute_snr
+from diffusers import DDIMScheduler, DDPMScheduler, DiffusionPipeline
+import torch
+from torch.utils.tensorboard import SummaryWriter 
 import torch.nn.functional as F
+from torch.optim.optimizer import Optimizer
+from torch.optim.lr_scheduler import LRScheduler 
 from tqdm.auto import tqdm
 
-#from accelerate.utils import InitProcessGroupKwargs
-#from datetime import timedelta
-
+from custom_modules import get_dataloader, DatasetMRI2D, DatasetMRI3D, Evaluation2D, Evaluation3D
+import pseudo3D
 
 class Training(ABC):
+    """
+    Abstract base class for training a model.
+
+    The training loop is implemented in the train method. Accelerator is used for distributed training. 
+
+    Args:
+        config (object): The configuration object containing various training parameters.
+        model (Union[diffusers.UNet2DModel, pseudo3D.UNet2DModel]): The model to be trained.
+        noise_scheduler (Union[DDIMScheduler, DDPMScheduler]): The noise scheduler used for adding noise to the images during training.
+        optimizer (Optimizer): The optimizer used for updating the model parameters.
+        lr_scheduler (LRScheduler): The learning rate scheduler used for adjusting the learning rate during training.
+        datasetTrain (DatasetMRI2D): The training dataset.
+        datasetEvaluation (DatasetMRI2D): The evaluation dataset for 2D images.
+        dataset3DEvaluation (DatasetMRI3D): The evaluation dataset for 3D images.
+        evaluation2D (Evaluation2D): The evaluation object for 2D images, used for computing metrics.
+        evaluation3D (Evaluation3D): The evaluation object for 3D images, used for computing metrics.
+        pipelineFactory (Callable[[Union[diffusers.UNet2DModel, pseudo3D.UNet2DModel], Union[DDIMScheduler, DDPMScheduler]], DiffusionPipeline]): 
+            A callable that creates a diffusion pipeline given the model and noise scheduler.
+        sorted_slice_sample_size (int): The number of sorted slices within one sample from the Dataset. 
+            Defaults to 1. This is needed for the pseudo3Dmodels, where the model expects that 
+            the slices within one batch are next to each other in the 3D volume.
+        min_snr_loss (bool): A boolean indicating whether to use the minimum SNR loss. Default is False.
+    """
+
     def __init__(
             self, 
             config, 
-            model, 
-            noise_scheduler, 
-            optimizer, 
-            lr_scheduler, 
-            datasetTrain, 
-            datasetEvaluation, 
-            dataset3DEvaluation, 
-            evaluation2D, 
-            evaluation3D, 
-            pipelineFactory, 
-            multi_sample=False,
-            min_snr_loss=False,
+            model: Union[diffusers.UNet2DModel, pseudo3D.UNet2DModel], 
+            noise_scheduler: Union[DDIMScheduler, DDPMScheduler],
+            optimizer: Optimizer, 
+            lr_scheduler: LRScheduler, 
+            datasetTrain: DatasetMRI2D, 
+            datasetEvaluation: DatasetMRI2D, 
+            dataset3DEvaluation: DatasetMRI3D, 
+            evaluation2D: Evaluation2D, 
+            evaluation3D: Evaluation3D, 
+            pipelineFactory: Callable[[Union[diffusers.UNet2DModel, pseudo3D.UNet2DModel], Union[DDIMScheduler, DDPMScheduler]], DiffusionPipeline],
+            sorted_slice_sample_size: int = 1,
+            min_snr_loss: bool = False,
             ):
         self.config = config
         self.model = model
@@ -44,14 +67,18 @@ class Training(ABC):
  
         self.accelerator = Accelerator(
             mixed_precision=config.mixed_precision,
-            gradient_accumulation_steps=config.gradient_accumulation_steps, 
-            project_dir=os.path.join(config.output_dir, "tensorboard"), #evt. delete
-            #kwargs_handlers=[InitProcessGroupKwargs(timeout=timedelta(seconds=2 * 1800))],
+            gradient_accumulation_steps=config.gradient_accumulation_steps,  
         ) 
         
-        self.train_dataloader = get_dataloader(dataset = datasetTrain, batch_size = config.train_batch_size, num_workers=self.config.num_dataloader_workers ,random_sampler=True, seed=self.config.seed, multi_sample=multi_sample)
-        self.d2_eval_dataloader = get_dataloader(dataset = datasetEvaluation, batch_size = config.eval_batch_size, num_workers=self.config.num_dataloader_workers, random_sampler=False, seed=self.config.seed, multi_sample=multi_sample)
-        self.d3_eval_dataloader = get_dataloader(dataset = dataset3DEvaluation, batch_size = 1, num_workers=self.config.num_dataloader_workers, random_sampler=False, seed=self.config.seed, multi_sample=False)        
+        self.train_dataloader = get_dataloader(dataset=datasetTrain, batch_size = config.train_batch_size, 
+                                               num_workers=self.config.num_dataloader_workers, random_sampler=True, 
+                                               seed=self.config.seed, multi_slice=sorted_slice_sample_size > 1)
+        self.d2_eval_dataloader = get_dataloader(dataset=datasetEvaluation, batch_size = config.eval_batch_size, 
+                                                 num_workers=self.config.num_dataloader_workers, random_sampler=False, 
+                                                 seed=self.config.seed, multi_slice=sorted_slice_sample_size > 1)
+        self.d3_eval_dataloader = get_dataloader(dataset=dataset3DEvaluation, batch_size = 1, 
+                                                 num_workers=self.config.num_dataloader_workers, random_sampler=False, 
+                                                 seed=self.config.seed, multi_slice=False) 
 
         if self.accelerator.is_main_process:
             #setup tensorboard
@@ -60,7 +87,7 @@ class Training(ABC):
             
             if config.output_dir is not None:
                 os.makedirs(config.output_dir, exist_ok=True) 
-            self.accelerator.init_trackers("train_example") #evt. delete
+            self.accelerator.init_trackers("train_example") #maybe delete
 
         self.model, self.optimizer, self.train_dataloader, self.d2_eval_dataloader, self.d3_eval_dataloader, self.lr_scheduler = self.accelerator.prepare(
             self.model, self.optimizer, self.train_dataloader, self.d2_eval_dataloader, self.d3_eval_dataloader, self.lr_scheduler
@@ -78,7 +105,7 @@ class Training(ABC):
             None if not self.accelerator.is_main_process else self.tb_summary, 
             self.accelerator)
 
-        os.makedirs(config.output_dir, exist_ok=True)  #evt. delete
+        os.makedirs(config.output_dir, exist_ok=True)  #maybe delete
 
         self.epoch = 0
         self.global_step = 0 
@@ -96,9 +123,8 @@ class Training(ABC):
             # For zero-terminal SNR, we have to handle the case where a sigma of Zero results in a Inf value.
             self.loss_weights[snr==0] = 1.0
 
-
     def log_meta_logs(self):
-        #log at tensorboard
+        """ Logs metadata information from the config to TensorBoard and CSV file. """
         scalars = [              
             "train_batch_size",
             "eval_batch_size",
@@ -119,7 +145,7 @@ class Training(ABC):
             "proportionTrainingCircularMasks",
             "use_min_snr_loss",
             "snr_gamma",
-            ] 
+        ] 
         texts = [
             "mixed_precision",
             "mode",
@@ -131,22 +157,23 @@ class Training(ABC):
             "dataset_eval_path",
             "restrict_train_slices",
             "restrict_eval_slices",
-            ] 
+        ] 
 
+        #log at tensorboard
         for scalar in scalars:
             if hasattr(self.config, scalar) and getattr(self.config, scalar) is not None:
                 self.tb_summary.add_scalar(scalar, getattr(self.config, scalar), 0)
         for text in texts:
             if hasattr(self.config, text) and getattr(self.config, text) is not None:
                 self.tb_summary.add_text(text, getattr(self.config, text), 0)
-        
         self.tb_summary.add_scalar("len(train_dataloader)", len(self.train_dataloader), 0)
         self.tb_summary.add_scalar("len(d2_eval_dataloader)", len(self.d2_eval_dataloader), 0)
         self.tb_summary.add_scalar("len(d3_eval_dataloader)", len(self.d3_eval_dataloader), 0) 
-        if self.config.t1n_target_shape:
-            self.tb_summary.add_scalar("t1n_target_shape_x", self.config.t1n_target_shape[0], 0) 
-            self.tb_summary.add_scalar("t1n_target_shape_y", self.config.t1n_target_shape[1], 0) 
+        if self.config.target_shape:
+            self.tb_summary.add_scalar("target_shape_x", self.config.target_shape[0], 0) 
+            self.tb_summary.add_scalar("target_shape_y", self.config.target_shape[1], 0) 
 
+        #log to csv
         if self.config.log_csv:
             with open(os.path.join(self.config.output_dir, "metrics.csv"), "w") as f:
                 for scalar in scalars:
@@ -160,22 +187,41 @@ class Training(ABC):
                 f.write(f"len(d3_eval_dataloader):{len(self.d3_eval_dataloader)}")
                 f.write("\n")
 
-        
+    def _save_logs(self, loss: int, total_norm: int):
+        """
+        Saves the training logs to the TensorBoard summary and updates the progress bar.
 
-    
-    def _save_logs(self, loss, total_norm):
-        
-        logs = {"weighted_train_loss": loss.cpu().detach().item(), "lr": self.lr_scheduler.get_last_lr()[0], "step": self.global_step}
+        Args:
+            loss (int): The weighted training loss.
+            total_norm (int): The total norm of the gradients.
+        """
+        logs = {
+            "weighted_train_loss": loss, 
+            "lr": self.lr_scheduler.get_last_lr()[0], 
+            "step": self.global_step}
         self.tb_summary.add_scalar("weighted_train_loss", logs["weighted_train_loss"], self.global_step)
         self.tb_summary.add_scalar("lr", logs["lr"], self.global_step)
         if total_norm:
             self.tb_summary.add_scalar("total_norm", total_norm, self.global_step) 
-    
+
         self.progress_bar.set_postfix(**logs)
-        #accelerator.log(logs, step=global_step)
 
-    def _get_noisy_images(self, clean_images, generator=None, timesteps=None):
+    def _get_noisy_images(self, clean_images: torch.tensor, generator: torch.Generator = None, 
+                          timesteps: torch.tensor = None) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
+        """
+        Generates noisy images by adding random gaussian noise to the clean images. 
 
+        Args:
+            clean_images (torch.tensor): The clean images to add noise to.
+            generator (torch.Generator, optional): The random number generator. Defaults to None.
+            timesteps (torch.tensor, optional): Predefined timesteps for diffusing each image. 
+                Defaults to None.
+
+        Returns:
+            tuple[torch.tensor, torch.tensor, torch.tensor]: A tuple containing the noisy images, 
+                the used noise, and the timesteps.
+        """
+        
         # Sample noise to add to the images 
         noise = torch.randn(clean_images.shape, device=clean_images.device, generator=generator)
         bs = clean_images.shape[0]
@@ -194,14 +240,36 @@ class Training(ABC):
         return noisy_images, noise, timesteps
 
     @abstractmethod
-    def _get_training_input(self, batch, generator=None, timesteps=None):
+    def _get_training_input(self, batch: torch.tensor, generator: torch.Generator = None, timesteps: torch.tensor = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Get the training input for the model.
+
+        Args:
+            batch (torch.tensor): The input batch of data.
+            generator (torch.Generator, optional): The random number generator. Defaults to None.
+            timesteps (torch.tensor, optional): Predefined timesteps for diffusing each image. 
+                Defaults to None.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing the input for the model, 
+                the sampled noise, and the used timesteps.
+        """
         pass
 
     @abstractmethod
-    def evaluate(self):
+    def evaluate(self, pipeline: DiffusionPipeline = None, deactivate_save_model: bool = False):
+        """ 
+        Evaluates the model on the evaluation datasets. 
+        
+        Args:
+            pipeline: The diffusion pipeline.
+            deactivate_save_model: A flag indicating whether to deactivate saving the model during evaluation.
+        """
+
         pass
     
     def train(self):
+        """ Trains the model using the training dataset. """
         for self.epoch in torch.arange(self.config.num_epochs):
             self.progress_bar = tqdm(total=len(self.train_dataloader), disable=not self.accelerator.is_local_main_process) 
             self.progress_bar.set_description(f"Epoch {self.epoch}") 
@@ -215,8 +283,9 @@ class Training(ABC):
                     noise_pred = self.model(input, timesteps, return_dict=False)[0]
 
                     if(self.min_snr_loss):
+                        # calculate the mse loss, mean over the non-batch dimensions, rebalance 
+                        # sample-wise losses with the timestep dependet loss weights and take the mean
                         mse_weights = self.loss_weights[timesteps]
-                        # mean over the non-batch dimensions, rebalance sample-wise losses with their respective loss weights and then take the mean
                         loss = F.mse_loss(noise_pred, noise, reduction="none") 
                         loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_weights 
                         loss = loss.mean()
@@ -225,27 +294,19 @@ class Training(ABC):
 
                     self.accelerator.backward(loss)
                     if self.accelerator.sync_gradients:
-                        total_norm = self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
+                        total_norm = self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0).cpu().detach().item()
                     else:
                         total_norm = None
         
-                    #log gradient norm 
-                    #parameters = [p for p in self.model.parameters() if p.grad is not None and p.requires_grad]
-                    #if len(parameters) == 0:
-                    #    total_norm = 0.0
-                    #else: 
-                    #    total_norm = torch.norm(torch.stack([torch.norm(p.grad.detach()).cpu() for p in parameters]), 2.0).item()
-
-                    #do learning step
+                    # do learning step
                     self.optimizer.step()
                     self.lr_scheduler.step()
                     self.optimizer.zero_grad() 
 
                 self.progress_bar.update(1)
 
-                # save logs
                 if self.accelerator.is_main_process:
-                    self._save_logs(loss, total_norm)
+                    self._save_logs(loss.cpu().detach().item(), total_norm)
 
                 self.global_step += 1 
 
