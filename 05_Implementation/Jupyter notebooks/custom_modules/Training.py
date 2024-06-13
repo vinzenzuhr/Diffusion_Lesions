@@ -28,10 +28,10 @@ class Training(ABC):
         noise_scheduler (Union[DDIMScheduler, DDPMScheduler]): The noise scheduler used for adding noise to the images during training.
         optimizer (Optimizer): The optimizer used for updating the model parameters.
         lr_scheduler (LRScheduler): The learning rate scheduler used for adjusting the learning rate during training.
-        datasetTrain (DatasetMRI2D): The training dataset.
-        datasetEvaluation (DatasetMRI2D): The evaluation dataset for 2D images.
-        dataset3DEvaluation (DatasetMRI3D): The evaluation dataset for 3D images. 
-        pipelineFactory (Callable[[Union[diffusers.UNet2DModel, pseudo3D.UNet2DModel], Union[DDIMScheduler, DDPMScheduler]], DiffusionPipeline]): 
+        dataset_train (DatasetMRI2D): The training dataset.
+        dataset_evaluation (DatasetMRI2D): The evaluation dataset for 2D images.
+        dataset_3D_evaluation (DatasetMRI3D): The evaluation dataset for 3D images. 
+        pipeline_factory (Callable[[Union[diffusers.UNet2DModel, pseudo3D.UNet2DModel], Union[DDIMScheduler, DDPMScheduler]], DiffusionPipeline]): 
             A callable that creates a diffusion pipeline given the model and noise scheduler.
         sorted_slice_sample_size (int): The number of sorted slices within one sample from the Dataset. 
             Defaults to 1. This is needed for the pseudo3Dmodels, where the model expects that 
@@ -46,10 +46,10 @@ class Training(ABC):
             noise_scheduler: Union[DDIMScheduler, DDPMScheduler],
             optimizer: Optimizer, 
             lr_scheduler: LRScheduler, 
-            datasetTrain: DatasetMRI2D, 
-            datasetEvaluation: DatasetMRI2D, 
-            dataset3DEvaluation: DatasetMRI3D, 
-            pipelineFactory: Callable[[Union[diffusers.UNet2DModel, pseudo3D.UNet2DModel], Union[DDIMScheduler, DDPMScheduler]], DiffusionPipeline],
+            dataset_train: DatasetMRI2D, 
+            dataset_evaluation: DatasetMRI2D, 
+            dataset_3D_evaluation: DatasetMRI3D, 
+            pipeline_factory: Callable[[Union[diffusers.UNet2DModel, pseudo3D.UNet2DModel], Union[DDIMScheduler, DDPMScheduler]], DiffusionPipeline],
             sorted_slice_sample_size: int = 1,
             min_snr_loss: bool = False,
             ):
@@ -62,7 +62,7 @@ class Training(ABC):
         self.noise_scheduler = noise_scheduler
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler  
-        self.pipelineFactory = pipelineFactory
+        self.pipeline_factory = pipeline_factory
         self.min_snr_loss=min_snr_loss
  
         self.accelerator = Accelerator(
@@ -70,13 +70,13 @@ class Training(ABC):
             gradient_accumulation_steps=config.gradient_accumulation_steps,  
         ) 
         
-        self.train_dataloader = get_dataloader(dataset=datasetTrain, batch_size = config.train_batch_size, 
+        self.train_dataloader = get_dataloader(dataset=dataset_train, batch_size = config.train_batch_size, 
                                                num_workers=self.config.num_dataloader_workers, random_sampler=True, 
                                                seed=self.config.seed, multi_slice=sorted_slice_sample_size > 1)
-        self.d2_eval_dataloader = get_dataloader(dataset=datasetEvaluation, batch_size = config.eval_batch_size, 
+        self.d2_eval_dataloader = get_dataloader(dataset=dataset_evaluation, batch_size = config.eval_batch_size, 
                                                  num_workers=self.config.num_dataloader_workers, random_sampler=False, 
                                                  seed=self.config.seed, multi_slice=sorted_slice_sample_size > 1)
-        self.d3_eval_dataloader = get_dataloader(dataset=dataset3DEvaluation, batch_size = 1, 
+        self.d3_eval_dataloader = get_dataloader(dataset=dataset_3D_evaluation, batch_size = 1, 
                                                  num_workers=self.config.num_dataloader_workers, random_sampler=False, 
                                                  seed=self.config.seed, multi_slice=False) 
 
