@@ -9,21 +9,20 @@ from dataclasses import dataclass
 
 @dataclass
 class TrainingConfig: 
-    t1n_target_shape = None # will transform t1n during preprocessing (computationally expensive)
+    target_shape = None # will transform t1n during preprocessing (computationally expensive)
     unet_img_shape = (256,256)
     channels = 1
-    effective_train_batch_size=16 
-    eval_batch_size = 4
-    num_sorted_samples = 1
+    effective_train_batch_size=32 
+    eval_batch_size = 16 
     num_dataloader_workers = 8
-    num_epochs = 68 # one epoch needs ~12min (x2 GPU), because their are more training samples due connected_components
-    gradient_accumulation_steps = 2
+    num_epochs = 250 # one epoch needs ~12min (x2 GPU), because their are more training samples due connected_components
+    gradient_accumulation_steps = 1
     learning_rate = 1e-4
     lr_warmup_steps = 100 #500
-    evaluate_epochs = 4
+    evaluate_epochs = 5
     deactivate2Devaluation = False
     deactivate3Devaluation = True
-    evaluate_num_batches = 30 # one batch needs ~15s.  
+    evaluate_num_batches = 15 # one batch needs ~15s.  
     evaluate_num_batches_3d = 2
     evaluate_3D_epochs = 1000  # one 3D evaluation needs ~20min 
     mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
@@ -34,15 +33,20 @@ class TrainingConfig:
     dataset_eval_path = "./datasets/filling/dataset_eval/imgs"
     segm_eval_path = "./datasets/filling/dataset_eval/segm"
     masks_eval_path = "./datasets/filling/dataset_eval/masks" 
-    train_only_connected_masks=True
-    eval_only_connected_masks=False
+    train_connected_masks=True
+    eval_connected_masks=False
     num_inference_steps=50
     log_csv = False
     mode = "train" # train / eval
     debug = False
     brightness_augmentation = True
     restrict_mask_to_wm=True
-    eval_loss_timesteps=[20,40,80,140]
+    proportion_training_circular_masks = 0.0
+    eval_loss_timesteps=[20,80,140,200,260,320,380,440,560,620,680,740,800,860,920,980]
+    restrict_train_slices = "mask"
+    restrict_eval_slices = "mask"
+    use_min_snr_loss=False
+    snr_gamma=5
 
     push_to_hub = False  # whether to upload the saved model to the HF Hub
     #hub_model_id = "<your-username>/<my-awesome-model>"  # the name of the repository to create on the HF Hub
@@ -87,8 +91,8 @@ if config.debug:
     config.train_batch_size = 1
     config.eval_batch_size = 1 
     config.eval_loss_timesteps = [20]
-    config.train_only_connected_masks=False
-    config.eval_only_connected_masks=False
+    config.train_connected_masks=False
+    config.eval_connected_masks=False
     config.evaluate_num_batches=1
     config.dataset_train_path = "./datasets/filling/dataset_eval/imgs"
     config.segm_train_path = "./datasets/filling/dataset_eval/segm"
@@ -115,9 +119,9 @@ if config.brightness_augmentation:
     transformations = transforms.RandomApply([ScaleDecorator(transforms.ColorJitter(brightness=1))], p=0.5)
 
 #create dataset
-datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), root_dir_masks=Path(config.masks_train_path), only_connected_masks=config.train_only_connected_masks, t1n_target_shape=config.t1n_target_shape, transforms=transformations, restrict_mask_to_wm=config.restrict_mask_to_wm)
-datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape)
-dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), only_connected_masks=config.eval_only_connected_masks, t1n_target_shape=config.t1n_target_shape)
+datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), restriction=config.restrict_train_slices, root_dir_segm=Path(config.segm_train_path), root_dir_masks=Path(config.masks_train_path), connected_masks=config.train_connected_masks, target_shape=config.target_shape, transforms=transformations, restrict_mask_to_wm=config.restrict_mask_to_wm)
+datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), restriction=config.restrict_eval_slices, root_dir_masks=Path(config.masks_eval_path), connected_masks=config.eval_connected_masks, target_shape=config.target_shape)
+dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), connected_masks=config.eval_connected_masks, target_shape=config.target_shape)
 
 
 # ### Visualize dataset
@@ -224,8 +228,6 @@ config.lr_scheduler = "cosine_schedule_with_warmup"
 from custom_modules import TrainingConditional, DDIMInpaintPipeline, Evaluation2DFilling, Evaluation3DFilling
 from custom_modules import PipelineFactories
 
-config.conditional_data = "Lesions"
-
 args = {
     "config": config, 
     "model": model, 
@@ -234,15 +236,15 @@ args = {
     "lr_scheduler": lr_scheduler, 
     "datasetTrain": datasetTrain, 
     "datasetEvaluation": datasetEvaluation, 
-    "dataset3DEvaluation": dataset3DEvaluation, 
-    "trainingCircularMasks": False, 
+    "dataset3DEvaluation": dataset3DEvaluation,  
     "evaluation2D": Evaluation2DFilling,
     "evaluation3D": Evaluation3DFilling, 
-    "pipelineFactory": PipelineFactories.get_ddim_inpaint_pipeline}
+    "pipelineFactory": PipelineFactories.get_ddim_inpaint_pipeline,
+    "min_snr_loss":config.use_min_snr_loss,}
 trainingLesions = TrainingConditional(**args)
 
 
-# In[14]:
+# In[ ]:
 
 
 if config.mode == "train":
