@@ -8,8 +8,8 @@ class ModelInputGenerator:
     Generates model inputs, depending on whether the model is conditional or unconditional.
 
     Args:
-        noise_scheduler (Union[DDIMScheduler, DDPMScheduler]): The noise scheduler used for adding noise to the images.
         conditional (bool, optional): Whether the model is conditional or unconditional. Defaults to False.
+        noise_scheduler (Union[DDIMScheduler, DDPMScheduler]): The noise scheduler used for adding noise to the images.
     """
 
     def __init__(self, conditional: bool, noise_scheduler: Union[DDIMScheduler, DDPMScheduler]): 

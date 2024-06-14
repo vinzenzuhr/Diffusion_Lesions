@@ -1,27 +1,36 @@
 from accelerate import Accelerator
 from diffusers import DiffusionPipeline
 import torch 
-from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import DataLoader 
 
-from custom_modules import Evaluation2D, EvaluationUtils, ModelInputGenerator
+from custom_modules import Evaluation2D, EvaluationUtils, ModelInputGenerator, Logger
 
 class Evaluation2DSynthesis(Evaluation2D):
     """
     Class for evaluating the performance of a diffusion pipeline in 2D specific for the use case 'lesion synthesis'.
-     
+
     Args:
-        config (object): Configuration object containing evaluation settings.
-        eval_dataloader (DataLoader): DataLoader for evaluation dataset.
-        train_dataloader (DataLoader): DataLoader for training dataset.
-        tb_summary (SummaryWriter): SummaryWriter for logging metrics.
+        intermediate_timestep (int): The intermediate timestep to start the diffusion process.
+        add_lesion_technique (str): The technique used to add the coarse lesions to the images.
+        eval_dataloader (DataLoader): The dataloader for evaluation data.
+        train_dataloader (DataLoader): The dataloader for training data.
+        logger (Logger): Object for logging.
         accelerator (Accelerator): Accelerator object for distributed training.
-        model_input_generator (ModelInputGenerator): Generates the input for the model.
+        num_inference_steps (int): Number of inference steps.
+        model_input_generator (ModelInputGenerator): ModelInputGenerator object for generating different model inputs.
+        output_dir (str): Output directory for saving results.
+        eval_loss_timesteps (list[int]): List of timesteps to evalute validation loss.
+        evaluate_num_batches (int, optional): Number of batches to evaluate. Defaults to -1 (all batches).
+        seed (int, optional): Random seed. Defaults to None.
     """
 
-    def __init__(self, config, eval_dataloader: DataLoader, train_dataloader: DataLoader, 
-                 tb_summary: SummaryWriter, accelerator: Accelerator, model_input_generator: ModelInputGenerator):
-        super().__init__(config, eval_dataloader, train_dataloader, tb_summary, accelerator, model_input_generator)
+    def __init__(self, intermediate_timestep: int, add_lesion_technique: str, eval_dataloader: DataLoader, train_dataloader: DataLoader, 
+                 logger: Logger, accelerator: Accelerator, num_inference_steps: int, model_input_generator: ModelInputGenerator, output_dir: str,
+                 eval_loss_timesteps: list[int], evaluate_num_batches: int = -1, seed: int = None):
+        super().__init__(eval_dataloader, train_dataloader, logger, accelerator, num_inference_steps, model_input_generator, output_dir, 
+                         eval_loss_timesteps, evaluate_num_batches, seed)
+        self.intermediate_timestep = intermediate_timestep
+        self.add_lesion_technique = add_lesion_technique
 
     def _add_coarse_lesions(self, clean_images: torch.tensor, batch: torch.tensor) -> tuple[torch.tensor, torch.tensor]:
         """
@@ -37,7 +46,7 @@ class Evaluation2DSynthesis(Evaluation2D):
         synthesis_masks = batch["synthesis"] 
         masks = batch["mask"].to(torch.bool) 
         lesion_intensity = EvaluationUtils.get_lesion_intensity(
-            self.config.add_lesion_technique, 
+            self.add_lesion_technique, 
             clean_images[masks])
         
         images_with_lesions = clean_images.clone()
@@ -52,7 +61,7 @@ class Evaluation2DSynthesis(Evaluation2D):
         Args:
             images (torch.tensor): The processed images.
             clean_images (torch.tensor): The ground truth images.
-            masks (torch.tensor): The masks, which are not used.
+            masks (torch.tensor): The masks for the images.
             batch (torch.tensor): The batch with additional data.
 
         Returns:
@@ -96,7 +105,7 @@ class Evaluation2DSynthesis(Evaluation2D):
         synthesized_images = pipeline(
             images_with_lesions,
             synthesis_masks,
-            timestep=self.config.intermediate_timestep,
+            timestep=self.intermediate_timestep,
             generator=generator, 
             num_inference_steps = self.config.num_inference_steps,
             **parameters

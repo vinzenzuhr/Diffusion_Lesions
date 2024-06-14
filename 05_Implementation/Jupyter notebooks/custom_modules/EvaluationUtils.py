@@ -1,11 +1,7 @@
 import os
-from pathlib import Path
 
-from diffusers.utils import make_image_grid
-import PIL 
 from skimage.metrics import structural_similarity
-import torch
-from torch.utils.tensorboard import SummaryWriter 
+import torch 
  
 def calc_metrics(gt_images: torch.tensor, gen_images: torch.tensor, masks: torch.tensor) -> dict:
     """
@@ -69,28 +65,6 @@ def calc_metrics(gt_images: torch.tensor, gen_images: torch.tensor, masks: torch
         
     return metrics
 
-
-def log_metrics(tb_summary: SummaryWriter, global_step: int, metrics: dict, config):
-    """
-    Logs the metrics to TensorBoard and optionally to a CSV file.
-
-    Args:
-        tb_summary (SummaryWriter): The TensorBoard summary writer.
-        global_step (int): The global step value.
-        metrics (dict): A dictionary containing the metrics to be logged.
-        config: The configuration object.
-    """
-    for key, value in metrics.items(): 
-        tb_summary.add_scalar(key, value, global_step) 
-
-    if config.log_csv:
-        with open(os.path.join(config.output_dir, "metrics.csv"), "a") as f:
-            for key, value in metrics.items():
-                f.write(f"{key}:{value},")
-            f.write(f"global_step:{global_step}")
-            f.write("\n")
-
-
 def get_lesion_intensity(add_lesion_technique: str, image_lesions: torch.tensor):
     """
     Get the intensity value for the lesions based on the specified technique.
@@ -128,32 +102,3 @@ def get_lesion_intensity(add_lesion_technique: str, image_lesions: torch.tensor)
         raise ValueError("add_lesion_technique unknown")
     
     return lesion_intensity
-
-
-def save_image(images: list[list[PIL.Image]], titles: list[str], path: Path, global_step: int, img_shape: tuple[int, int]):
-    """
-    Save a grid of images to the specified path.
-
-    Args:
-        images (list[list[PIL.Image]]): A list of lists of PIL.Image objects representing the images to be saved.
-        titles (list[str]): A list of titles for each image grid.
-        path (Path): The path where the images will be saved.
-        global_step (int): The global step used for naming the saved images.
-        img_shape (tuple[int, int]): The shape of the images in the grid.
-
-    Raises:
-        ValueError: If the number of images in the list is greater than 16.
-
-    Returns:
-        None
-    """
-    os.makedirs(path, exist_ok=True)
-    for image_list, title in zip(images, titles):             
-        if len(image_list) > 16:
-            raise ValueError("Number of images in list must be less than 16")
-        missing_num = 16 - len(image_list)
-        for _ in range(missing_num):
-            image_list.append(PIL.Image.new("L", img_shape, 0))
-        image_grid = make_image_grid(image_list, rows=4, cols=4)
-        image_grid.save(f"{path}/{title}_{global_step:07d}.png")
-    print("image saved")

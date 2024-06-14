@@ -14,11 +14,7 @@ from .DDIMInpaintPipeline import DDIMInpaintPipeline
 
 from .ModelInputGenerator import ModelInputGenerator
 
-from .Training import Training
-
-from .TrainingConditional import TrainingConditional
-
-from .TrainingUnconditional import TrainingUnconditional
+from .Training import Training 
 
 from .Evaluation2D import Evaluation2D 
 
@@ -33,6 +29,8 @@ from .Evaluation3DFilling import Evaluation3DFilling
 from .Evaluation3DSynthesis import Evaluation3DSynthesis
 
 from .GuidedRePaintPipeline import GuidedRePaintPipeline
+
+from .Logger import Logger
 
 from .pseudo3D import UNet2DModel
 
