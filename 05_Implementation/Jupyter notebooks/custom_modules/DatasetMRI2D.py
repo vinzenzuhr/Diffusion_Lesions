@@ -116,21 +116,6 @@ class DatasetMRI2D(DatasetMRI):
 
             for slices_dict in slices_dicts:  
                 for i in np.arange(len(slices_dict["list_relevant_slices"])):
-                    if i+sorted_slice_sample_size-1 >= len(slices_dict["list_relevant_slices"]):
-                        continue 
-                    # Make sure that the next sorted_slice_sample_size slices are next to each other in 
-                    # the 3D volume. That's the case if the difference between the first and last 
-                    # slice idx is equal to the sorted_slice_sample_size minus one. 
-                    # If not continue with the next slice.
-                    if (
-                        sorted_slice_sample_size > 1 
-                        and (
-                            slices_dict["list_relevant_slices"][i + sorted_slice_sample_size - 1] 
-                            - sorted_slice_sample_size + 1 != slices_dict["list_relevant_slices"][i]
-                        )
-                    ):
-                        continue
-
                     self.idx_to_element[idx_dict]=(
                         self.list_paths_img[idx_img], 
                         slices_dict["path_segm"], 
@@ -187,30 +172,30 @@ class DatasetMRI2D(DatasetMRI):
             segm_slice = torch.empty(0)
         # get 2D circular mask or 2D slice vom 3D lesion mask
         if self.proportionTrainingCircularMasks > random.random():
-            mask_slice = self.get_random_circular_masks(n=1)
-            if self.sorted_slice_sample_size > 1:
-                segm_slice = segm_slice.unsqueeze(1)
+            mask_slice = self.get_random_circular_masks(n=self.sorted_slice_sample_size) 
         elif mask != None:
             if self.connected_masks:
-                # create mask from random connected components
+                # create mask from random amount of connected components
                 component_matrix = torch.load(component_matrix_path)
                 assert component_matrix.shape == img.shape, f"Component matrix shape {component_matrix.shape} does not match image shape {img.shape}"
-                rand_n = 1 if len(components) == 1 else torch.randint(1, len(components), (1,)).item()
-                rand_components_idx = torch.randperm(len(components))[:rand_n]
-                mask = torch.zeros_like(component_matrix)
-                for rand_idx in rand_components_idx:
-                    mask[component_matrix == components[rand_idx]] = 1
+                if len(components) == 0:
+                    mask = torch.tensor(0) 
+                else:
+                    rand_n = 1 if len(components) == 1 else torch.randint(1, len(components), (1,)).item()
+                    rand_components_idx = torch.randperm(len(components))[:rand_n]
+                    mask = torch.zeros_like(component_matrix)
+                    for rand_idx in rand_components_idx:
+                        mask[component_matrix == components[rand_idx]] = 1
+                    mask_slice = mask[:, idx_slice:idx_slice+self.sorted_slice_sample_size, :].permute(1, 0, 2)
             else:
                 if segm_path and self.restrict_mask_to_wm:
                     binary_white_matter_segm = self._get_binary_segm(segm)
                     mask = binary_white_matter_segm * mask
-            mask_slice = mask[:, idx_slice:idx_slice+self.sorted_slice_sample_size, :].permute(1, 0, 2)
+                mask_slice = mask[:, idx_slice:idx_slice+self.sorted_slice_sample_size, :].permute(1, 0, 2)
 
             if not mask_slice.any() and self.default_to_circular_mask:
-                mask_slice = self.get_random_circular_masks(n=1)
-                if self.sorted_slice_sample_size > 1:
-                    segm_slice = segm_slice.unsqueeze(1)
-
+                mask_slice = self.get_random_circular_masks(n=self.sorted_slice_sample_size)
+            
             if self.sorted_slice_sample_size > 1:
                 mask_slice = mask_slice.unsqueeze(1)
         else:
@@ -305,29 +290,23 @@ class DatasetMRI2D(DatasetMRI):
             component_matrix, _ = self._get_component_matrix(mask, path_component_matrix)
 
         # Go through every slice and add relevant slices to the dataset. 
-        # Make sure there are packages of sorted_slice_sample_size slices, which are next to 
-        # each other in the 3D volume.
+        # Skip the last sorted_slice_sample_size slices. They will be added in the __getitem__ function
         list_relevant_slices = list()
         list_relevant_components = list()
-        position_in_package = 0
-        for idx_slice in torch.arange(img.shape[1]):
+        for idx_slice in torch.arange(img.shape[1] - self.sorted_slice_sample_size + 1):
             # If there is no content and it's not in the middle of a package, then skip it
-            if restriction == "mask" and not mask[:, idx_slice, :].any() and position_in_package == 0:
+            if restriction == "mask" and not mask[:, idx_slice, :].any():
                 continue
-            if restriction == "segm" and not segm[:, idx_slice, :].any() and position_in_package == 0:
+            if restriction == "segm" and not segm[:, idx_slice, :].any():
                 continue
 
             relevant_components = None
             if self.connected_masks:
                 relevant_components = self._get_relevant_components(component_matrix, idx_slice)
-                if restriction == "mask" and len(relevant_components) == 0 and position_in_package == 0:
+                if restriction == "mask" and len(relevant_components) == 0:
                     continue
             list_relevant_slices.append(idx_slice)
             list_relevant_components.append(relevant_components) 
-
-            position_in_package += 1
-            if position_in_package == self.sorted_slice_sample_size:
-                position_in_package = 0 
 
         output["path_mask"] = path_mask
         output["path_segm"] = path_segm
