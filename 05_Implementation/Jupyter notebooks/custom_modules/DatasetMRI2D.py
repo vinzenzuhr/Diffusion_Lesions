@@ -60,7 +60,6 @@ class DatasetMRI2D(DatasetMRI):
         connected_masks: bool = False,
         min_area: float = 100, 
         sorted_slice_sample_size: int = 1,
-        random_sorted_samples: bool = False,
         transforms: torch.nn.Module = None,
         dilation: int = 0,
         restrict_mask_to_wm: bool = False,
@@ -82,7 +81,6 @@ class DatasetMRI2D(DatasetMRI):
         self.sorted_slice_sample_size = sorted_slice_sample_size
         self.transforms = transforms
         self.min_area = min_area
-        self.random_sorted_samples = random_sorted_samples
         self.proportionTrainingCircularMasks = proportion_training_circular_masks
         self.circleMaskShape = circle_mask_shape
         self.default_to_circular_mask = default_to_circular_mask
@@ -117,10 +115,9 @@ class DatasetMRI2D(DatasetMRI):
                 )  
 
             for slices_dict in slices_dicts:  
-                for i in np.arange(
-                        len(slices_dict["list_relevant_slices"]), 
-                        step=1 if self.random_sorted_samples else sorted_slice_sample_size):
-                     
+                for i in np.arange(len(slices_dict["list_relevant_slices"])):
+                    if i+sorted_slice_sample_size-1 >= len(slices_dict["list_relevant_slices"]):
+                        continue 
                     # Make sure that the next sorted_slice_sample_size slices are next to each other in 
                     # the 3D volume. That's the case if the difference between the first and last 
                     # slice idx is equal to the sorted_slice_sample_size minus one. 
@@ -133,9 +130,6 @@ class DatasetMRI2D(DatasetMRI):
                         )
                     ):
                         continue
-
-                    if i+sorted_slice_sample_size-1 >= len(slices_dict["list_relevant_slices"]):
-                        continue   
 
                     self.idx_to_element[idx_dict]=(
                         self.list_paths_img[idx_img], 
