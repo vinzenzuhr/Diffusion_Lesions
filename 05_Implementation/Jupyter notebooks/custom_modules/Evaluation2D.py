@@ -46,7 +46,7 @@ class Evaluation2D(ABC):
         self.logger = logger
         self.accelerator = accelerator
         self.num_inference_steps = num_inference_steps 
-        self.best_ssim = float("inf")
+        self.best_ssim = 0
         self.model_input_generator = model_input_generator
         self.output_dir = output_dir
         self.eval_loss_timesteps = eval_loss_timesteps
@@ -181,6 +181,7 @@ class Evaluation2D(ABC):
             
             if (self.evaluate_num_batches != -1) and (n_iter >= self.evaluate_num_batches - 1):
                 break 
+
         
         # calculate average metrics
         for key, value in metrics.items():
@@ -227,7 +228,7 @@ class Evaluation2D(ABC):
                 raise ValueError("Number of images in list must be less than 16")
             missing_num = 16 - len(image_list)
             for _ in range(missing_num):
-                image_list.append(PIL.Image.new("L", image_list[0].shape, 0))
+                image_list.append(PIL.Image.new("L", image_list[0].size, 0))
             image_grid = make_image_grid(image_list, rows=4, cols=4)
             image_grid.save(f"{path}/{title}_{global_step:07d}.png")
         print("image saved")
