@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 import os
 
 from accelerate import Accelerator 
+import nibabel as nib
 from diffusers import DiffusionPipeline
 import torch 
 from torch.utils.data import DataLoader 
@@ -21,19 +22,33 @@ class Evaluation3D(ABC):
         logger (Logger): The logger object for logging.
         accelerator (Accelerator): The accelerator object for distributed training.
         output_dir (str): The output directory for saving results.
+        filename (str): The filename for saving the processed nifti images.
         evaluate_num_batches (int, optional): The number of batches to evaluate. Defaults to -1 (all batches). 
     """
 
-    def __init__(self, dataloader: DataLoader, logger: Logger, accelerator: Accelerator, output_dir: str, evaluate_num_batches: int = -1):
+    def __init__(self, dataloader: DataLoader, logger: Logger, accelerator: Accelerator, output_dir: str, 
+                 filename: str, evaluate_num_batches: int = -1):
         self.dataloader = dataloader
         self.logger = logger
         self.accelerator = accelerator
         self.output_dir = output_dir
+        self.filename = filename
         self.evaluate_num_batches = evaluate_num_batches
 
         # create folder for segmentation algorithm afterwards
         segmentation_dir = os.path.join(self.output_dir, "segmentations_3D")
         os.makedirs(segmentation_dir, exist_ok=True)
+
+    def _save_image(self, final_3d_image: nib.nifti1.Nifti1Image, save_dir: str, filename: str): 
+        """
+        Save the final 3D nifti image to a specified directory.
+
+        Args:
+            final_3d_images (nib.nifti1.Nifti1Image): Final 3D images to be saved.
+            save_dir (str): Directory path to save the images.
+            filename (str): Filename of the image.
+        """
+        nib.save(final_3d_image, f"{save_dir}/{filename}.nii.gz")
 
     @abstractmethod
     def _start_pipeline(self, clean_images: torch.tensor, masks: torch.tensor, parameters: dict,
@@ -95,7 +110,7 @@ class Evaluation3D(ABC):
                 final_3d_images = DatasetMRI.postprocess(final_3d_images.squeeze(), *proc_info, self.dataloader.dataset.get_metadata(int(idx)))
                 save_dir = os.path.join(self.output_dir, f"samples_3D/{name}")
                 os.makedirs(save_dir, exist_ok=True)
-                self._save_image(final_3d_images, save_dir)
+                self._save_image(final_3d_images, save_dir, self.filename)
 
             self.progress_bar.update(1)
 

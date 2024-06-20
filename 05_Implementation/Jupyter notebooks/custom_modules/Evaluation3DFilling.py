@@ -2,7 +2,6 @@ import math
 
 from accelerate import Accelerator 
 from diffusers import DiffusionPipeline
-import nibabel as nib
 import torch 
 from torch.utils.data import DataLoader 
 
@@ -27,9 +26,9 @@ class Evaluation3DFilling(Evaluation3D):
     """
 
     def __init__(self, dataloader: DataLoader, logger: Logger, accelerator: Accelerator, output_dir: str, 
-                 num_inference_steps: int, eval_batch_size: int, sorted_slice_sample_size: int = 1, 
+                 filename: str, num_inference_steps: int, eval_batch_size: int, sorted_slice_sample_size: int = 1, 
                  evaluate_num_batches: int = -1, seed: int = None,):
-        super().__init__(dataloader, logger, accelerator, output_dir, evaluate_num_batches)
+        super().__init__(dataloader, logger, accelerator, output_dir, filename, evaluate_num_batches)
         self.num_inference_steps = num_inference_steps
         self.eval_batch_size = eval_batch_size
         self.sorted_slice_sample_size = sorted_slice_sample_size
@@ -92,13 +91,3 @@ class Evaluation3DFilling(Evaluation3D):
         images = images.permute(1, 2, 0, 3) 
 
         return images, clean_images, slice_indices, masks
-    
-    def _save_image(self, final_3d_image: nib.nifti1.Nifti1Image, save_dir: str): 
-        """
-        Save the final 3D nifti image to a specified directory.
-
-        Args:
-            final_3d_images (nib.nifti1.Nifti1Image): Final 3D images to be saved.
-            save_dir (str): Directory path to save the images.
-        """
-        nib.save(final_3d_image, f"{save_dir}/T1.nii.gz")

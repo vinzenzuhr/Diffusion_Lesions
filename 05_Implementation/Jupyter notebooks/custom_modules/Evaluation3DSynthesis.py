@@ -30,10 +30,10 @@ class Evaluation3DSynthesis(Evaluation3D):
     """
 
     def __init__(self, intermediate_timestep: int, add_lesion_technique: str, dataloader: DataLoader, 
-                 logger: Logger, accelerator: Accelerator, output_dir: str, num_inference_steps: int, 
+                 logger: Logger, accelerator: Accelerator, output_dir: str, filename: str, num_inference_steps: int, 
                  eval_batch_size: int, sorted_slice_sample_size: int = 1, evaluate_num_batches: int = -1, 
                  seed: int = None,):
-        super().__init__(dataloader, logger, accelerator, output_dir, evaluate_num_batches) 
+        super().__init__(dataloader, logger, accelerator, output_dir, filename, evaluate_num_batches) 
         self.intermediate_timestep = intermediate_timestep
         self.add_lesion_technique = add_lesion_technique
         self.num_inference_steps = num_inference_steps
@@ -106,13 +106,3 @@ class Evaluation3DSynthesis(Evaluation3D):
         images = images.permute(1, 2, 0, 3) 
                 
         return images, clean_images, slice_indices, synthesis_masks
-    
-    def _save_image(self, final_3d_image: nib.nifti1.Nifti1Image, save_dir: str): 
-        """
-        Saves the final 3D image to disk.
-        
-        Args:
-            final_3d_image (nib.nifti1.Nifti1Image): The final 3D nifti image to be saved.
-            save_dir (str): The directory where the image should be saved.
-        """
-        nib.save(final_3d_image, f"{save_dir}/FLAIR.nii.gz")
