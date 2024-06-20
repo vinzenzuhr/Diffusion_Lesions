@@ -8,49 +8,69 @@
 from dataclasses import dataclass
 
 @dataclass
-class TrainingConfig: 
-    t1n_target_shape = None # will transform t1n during preprocessing (computationally expensive)
-    unet_img_shape = (256,256)
-    channels = 1
-    effective_train_batch_size=16 
-    eval_batch_size = 16
-    num_sorted_samples = 1
-    num_dataloader_workers = 8
-    num_epochs = 68 # one epoch needs ~12min (x2 GPU), because their are more training samples due connected_components
-    gradient_accumulation_steps = 1
-    learning_rate = 1e-4
-    lr_warmup_steps = 100 #500
-    evaluate_epochs = 4
-    deactivate2Devaluation = False
-    deactivate3Devaluation = True
-    evaluate_num_batches = 30 # one batch needs ~15s.  
-    evaluate_num_batches_3d = 2
-    evaluate_3D_epochs = 1000  # one 3D evaluation needs ~20min 
-    mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision
-    output_dir = "lesion-filling-256-cond-lesions"  # the model name locally and on the HF Hub
+class Config: 
+    mode = "train" # ['train', 'eval']
+    debug = False
+    output_dir = "lesion-filling-256-cond-mixture" 
+
+    #dataset config
     dataset_train_path = "./datasets/filling/dataset_train/imgs"
     segm_train_path = "./datasets/filling/dataset_train/segm"
     masks_train_path = "./datasets/filling/dataset_train/masks"
     dataset_eval_path = "./datasets/filling/dataset_eval/imgs"
     segm_eval_path = "./datasets/filling/dataset_eval/segm"
     masks_eval_path = "./datasets/filling/dataset_eval/masks" 
-    train_only_connected_masks=True
-    eval_only_connected_masks=False
-    num_inference_steps=50
-    log_csv = False
-    mode = "train" # train / eval
-    debug = True
-    brightness_augmentation = True
-    restrict_mask_to_wm=True
-    proportionTrainingCircularMasks = 0.5
-    eval_loss_timesteps=[20,80,140,200,260,320,380,440,560,620,680,740,800,860,920,980]
+    target_shape = None # During preprocessing the img gets transformered to this shape (computationally expensive) 
+    unet_img_shape = (256,256) # This defines the input layer of the model
+    channels = 1 # Number of channels of input layer of the model (1 for grayscale and 3 for RGB)
+    restrict_train_slices = "segm" # Defines which 2D slices are used from the 3D MRI ['mask', 'segm', or 'unrestricted']
+    restrict_eval_slices = "mask" # Defines which 2D slices are used from the 3D MRI ['mask', 'segm', or 'unrestricted']
+    restrict_mask_to_wm=True # Restricts lesion masks to white matter based on segmentation
+    proportion_training_circular_masks = 0.5 # Defines if random circular masks should be used instead of the provided lesion masks. 
+                                             # 1 is 100% random circular masks and 0 is 100% lesion masks.
+    train_connected_masks=True  # The distribution of the masks is extended by splitting the masks into several smaller connected components.  	
+    brightness_augmentation = True	# The training data gets augmented with randomly applied ColorJitter. 
+    num_dataloader_workers = 8 # how many subprocesses to use for data loading
 
-    push_to_hub = False  # whether to upload the saved model to the HF Hub
-    #hub_model_id = "<your-username>/<my-awesome-model>"  # the name of the repository to create on the HF Hub
-    #hub_private_repo = False
-    #overwrite_output_dir = True  # overwrite the old model when re-running the notebook
-    seed = 0
-config = TrainingConfig()
+    # train config 
+    num_epochs = 500 
+    sorted_slice_sample_size = 1 # The number of sorted slices within one sample. Defaults to 1.
+                                 # This is needed for the pseudo3Dmodels, where the model expects that the slices within one batch
+                                 # are next to each other in the 3D volume.
+    train_batch_size = None
+    effective_train_batch_size=32  # The train_batch_size gets recalculated to this batch size based on accumulation_steps and number of GPU's.
+	                                # For pseudo3D models the sorted_slice_sample_size gets calculcated to this batch size. 
+                                    # The train_batch_size and eval_batch_size should be 1.
+    eval_batch_size = 16 
+    learning_rate = 1e-4
+    lr_warmup_steps = 500 
+    use_min_snr_loss=False
+    snr_gamma=5
+    gradient_accumulation_steps = 1
+    mixed_precision = "fp16"  # `no` for float32, `fp16` for automatic mixed precision 
+
+    # evaluation config
+    num_inference_steps=50
+    evaluate_2D_epochs = 10 # The interval at which to evaluate the model on 2D images. 
+    evaluate_3D_epochs = 1000  # The interval at which to evaluate the model on 3D images.  
+    evaluate_num_batches = 20 # Number of batches used for evaluation. -1 means all batches. 
+    evaluate_num_batches_3d = 2 # Number of batches used for evaluation. -1 means all batches. 
+    evaluate_unconditional_img = False # Used for unconditional models to generate some samples without the repaint pipeline. 
+    deactivate_2D_evaluation = False
+    deactivate_3D_evaluation = True
+    img3D_filename = "T1" # Filename to save the processed 3D images 
+    eval_loss_timesteps=[20,80,140,200,260,320,380,440,560,620,680,740,800,860,920,980] # List of timesteps to evalute validation loss.
+    eval_mask_dilation = 0 # dilation value for masks
+    #add_lesion_technique = "other_lesions_99Quantile" # Used for synthesis only. 
+                                                      # ['empty', 'mean_intensity', 'other_lesions_1stQuantile', 'other_lesions_mean', 
+                                                      # 'other_lesions_median', 'other_lesions_3rdQuantile', 'other_lesions_99Quantile'] 
+    #intermediate_timestep = 3 # Used for synthesis only. Diffusion process starts from this timesteps. 
+                               # Num_inference_steps means the whole pipeline and 1 the last step. 
+    #jump_length = 8 # Used for unconditional lesion filling only. Defines the jump_length from the repaint paper.
+    #jump_n_sample = 10 # Used for unconditional lesion filling only. Defines the jump_n_sample from the repaint paper.
+    log_csv = False # saves evaluation metrics as csv 
+    seed = 0 # used for dataloader sampling and generation of the initial noise to start the diffusion process
+config = Config()
 
 
 # In[2]:
@@ -88,8 +108,8 @@ if config.debug:
     config.train_batch_size = 1
     config.eval_batch_size = 1 
     config.eval_loss_timesteps = [20]
-    config.train_only_connected_masks=False
-    config.eval_only_connected_masks=False
+    config.train_connected_masks=False
+    config.eval_connected_masks=False
     config.evaluate_num_batches=1
     config.dataset_train_path = "./datasets/filling/dataset_eval/imgs"
     config.segm_train_path = "./datasets/filling/dataset_eval/segm"
@@ -116,9 +136,9 @@ if config.brightness_augmentation:
     transformations = transforms.RandomApply([ScaleDecorator(transforms.ColorJitter(brightness=1))], p=0.5)
 
 #create dataset
-datasetTrain = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), root_dir_segm=Path(config.segm_train_path), root_dir_masks=Path(config.masks_train_path), connected_masks=config.train_only_connected_masks, target_shape=config.t1n_target_shape, transforms=transformations, restrict_mask_to_wm=config.restrict_mask_to_wm)
-datasetEvaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), connected_masks=config.eval_only_connected_masks, target_shape=config.t1n_target_shape)
-dataset3DEvaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), connected_masks=config.eval_only_connected_masks, target_shape=config.t1n_target_shape)
+dataset_train = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), restriction=config.restrict_train_slices, root_dir_segm=Path(config.segm_train_path), root_dir_masks=Path(config.masks_train_path), connected_masks=config.train_connected_masks, target_shape=config.target_shape, transforms=transformations, proportion_training_circular_masks=config.proportion_training_circular_masks, circle_mask_shape=config.unet_img_shape, restrict_mask_to_wm=config.restrict_mask_to_wm)
+dataset_evaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), restriction=config.restrict_eval_slices, root_dir_masks=Path(config.masks_eval_path), connected_masks=config.eval_connected_masks, target_shape=config.target_shape, dilation=config.eval_mask_dilation)
+dataset_3D_evaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), connected_masks=config.eval_connected_masks, target_shape=config.target_shape, dilation=config.eval_mask_dilation)
 
 
 # ### Prepare Training
@@ -184,7 +204,7 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
 lr_scheduler = get_cosine_schedule_with_warmup(
     optimizer=optimizer,
     num_warmup_steps=config.lr_warmup_steps,
-    num_training_steps=(math.ceil(len(datasetTrain)/config.train_batch_size) * config.num_epochs), # num_iterations per epoch * num_epochs
+    num_training_steps=(math.ceil(len(dataset_train)/config.train_batch_size) * config.num_epochs), # num_iterations per epoch * num_epochs
 )
 
 config.lr_scheduler = "cosine_schedule_with_warmup"
@@ -193,40 +213,144 @@ config.lr_scheduler = "cosine_schedule_with_warmup"
 # In[11]:
 
 
-from custom_modules import TrainingConditional, DDIMInpaintPipeline, Evaluation2DFilling, Evaluation3DFilling
+from accelerate import Accelerator 
+
+accelerator = Accelerator(
+    mixed_precision=config.mixed_precision,
+    gradient_accumulation_steps=config.gradient_accumulation_steps,  
+)
+
+
+# In[12]:
+
+
+from torch.utils.tensorboard import SummaryWriter
+import os
+
+if accelerator.is_main_process:
+    if config.output_dir is not None:
+        os.makedirs(config.output_dir, exist_ok=True) 
+    #setup tensorboard
+    tb_summary = SummaryWriter(config.output_dir, purge_step=0)
+    accelerator.init_trackers("train_example") #maybe delete
+
+
+# In[13]:
+
+
+if accelerator.is_main_process:
+    from custom_modules import Logger
+    logger = Logger(tb_summary, config.log_csv)
+    logger.log_config(config)
+
+
+# In[14]:
+
+
+from custom_modules import get_dataloader
+
+train_dataloader = get_dataloader(dataset=dataset_train, batch_size = config.train_batch_size, 
+                                  num_workers=config.num_dataloader_workers, random_sampler=True, 
+                                  seed=config.seed, multi_slice=config.sorted_slice_sample_size > 1)
+d2_eval_dataloader = get_dataloader(dataset=dataset_evaluation, batch_size = config.eval_batch_size, 
+                                    num_workers=config.num_dataloader_workers, random_sampler=False, 
+                                    seed=config.seed, multi_slice=config.sorted_slice_sample_size > 1)
+d3_eval_dataloader = get_dataloader(dataset=dataset_3D_evaluation, batch_size = 1, 
+                                    num_workers=config.num_dataloader_workers, random_sampler=False, 
+                                    seed=config.seed, multi_slice=False) 
+
+
+# In[ ]:
+
+
+model, optimizer, train_dataloader, d2_eval_dataloader, d3_eval_dataloader, lr_scheduler = accelerator.prepare(
+    model, optimizer, train_dataloader, d2_eval_dataloader, d3_eval_dataloader, lr_scheduler
+)
+
+
+# In[15]:
+
+
+from custom_modules import ModelInputGenerator, Evaluation2DFilling, Evaluation3DFilling 
+
+model_input_generator = ModelInputGenerator(conditional=True, noise_scheduler=noise_scheduler)
+ 
+args = {
+    "eval_dataloader": d2_eval_dataloader, 
+    "train_dataloader": train_dataloader,
+    "logger": None if not accelerator.is_main_process else logger, 
+    "accelerator": accelerator,
+    "num_inference_steps": config.num_inference_steps,
+    "model_input_generator": model_input_generator,
+    "output_dir": config.output_dir,
+    "eval_loss_timesteps": config.eval_loss_timesteps, 
+    "evaluate_num_batches": config.evaluate_num_batches, 
+    "seed": config.seed
+}
+evaluation2D = Evaluation2DFilling(**args)
+args = {
+    "dataloader": d3_eval_dataloader, 
+    "logger": None if not accelerator.is_main_process else logger, 
+    "accelerator": accelerator,
+    "output_dir": config.output_dir,
+    "filename": config.3d_img_filename,
+    "num_inference_steps": config.num_inference_steps,
+    "eval_batch_size": config.eval_batch_size,
+    "sorted_slice_sample_size": config.sorted_slice_sample_size,
+    "evaluate_num_batches": config.evaluate_num_batches_3d,
+    "seed": config.seed,
+}
+evaluation3D = Evaluation3DFilling(**args)
+
+
+# In[ ]:
+
+
+from custom_modules import Training, DDIMInpaintPipeline, Evaluation2DFilling, Evaluation3DFilling
 from custom_modules import PipelineFactories
 
-config.conditional_data = "Lesions"
-
-args = {
-    "config": config, 
+args = { 
+    "accelerator": accelerator,
     "model": model, 
     "noise_scheduler": noise_scheduler, 
     "optimizer": optimizer, 
     "lr_scheduler": lr_scheduler, 
-    "datasetTrain": datasetTrain, 
-    "datasetEvaluation": datasetEvaluation, 
-    "dataset3DEvaluation": dataset3DEvaluation,  
-    "evaluation2D": Evaluation2DFilling,
-    "evaluation3D": Evaluation3DFilling, 
-    "pipelineFactory": PipelineFactories.get_ddim_inpaint_pipeline}
-trainingLesions = TrainingConditional(**args)
+    "train_dataloader": train_dataloader, 
+    "d2_eval_dataloader": d2_eval_dataloader, 
+    "d3_eval_dataloader": d3_eval_dataloader, 
+    "model_input_generator": model_input_generator,
+    "evaluation2D": evaluation2D,
+    "evaluation3D": evaluation3D,
+    "logger": None if not accelerator.is_main_process else logger,
+    "pipeline_factory": PipelineFactories.get_ddim_inpaint_pipeline,
+    "num_epochs": config.num_epochs, 
+    "evaluate_2D_epochs": config.evaluate_2D_epochs,
+    "evaluate_3D_epochs": config.evaluate_3D_epochs,
+    "min_snr_loss": config.use_min_snr_loss,
+    "snr_gamma": config.snr_gamma,
+    "evaluate_unconditional_img": config.evaluate_unconditional_img,
+    "deactivate_2D_evaluation": config.deactivate_2D_evaluation, 
+    "deactivate_3D_evaluation": config.deactivate_3D_evaluation, 
+    "evaluation_pipeline_parameters": {},
+    "debug": config.debug, 
+    }
+trainingMixture = Training(**args)
 
 
 # In[ ]:
 
 
 if config.mode == "train":
-    trainingLesions.train()
+    trainingMixture.train()
 
 
 # In[ ]:
 
 
 if config.mode == "eval":
-    trainingLesions.config.deactivate3Devaluation = False
+    trainingMixture.deactivate_3D_evaluation = False
     pipeline = DDIMInpaintPipeline.from_pretrained(config.output_dir) 
-    trainingLesions.evaluate(pipeline, deactivate_save_model=True)
+    trainingMixture.evaluate(pipeline, deactivate_save_model=True)
 
 
 # In[ ]:
