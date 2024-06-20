@@ -179,7 +179,7 @@ class DatasetMRI2D(DatasetMRI):
                 component_matrix = torch.load(component_matrix_path)
                 assert component_matrix.shape == img.shape, f"Component matrix shape {component_matrix.shape} does not match image shape {img.shape}"
                 if len(components) == 0:
-                    mask = torch.tensor(0) 
+                    mask_slice = torch.tensor(0) 
                 else:
                     rand_n = 1 if len(components) == 1 else torch.randint(1, len(components), (1,)).item()
                     rand_components_idx = torch.randperm(len(components))[:rand_n]
