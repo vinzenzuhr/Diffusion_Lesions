@@ -41,7 +41,8 @@ class Training(ABC):
         pipeline_factory (Callable[[Union[diffusers.UNet2DModel, pseudo3D.UNet2DModel], Union[DDIMScheduler, DDPMScheduler]], DiffusionPipeline]): 
             The factory function for creating the diffusion pipeline.
         num_epochs (int): The number of training epochs.
-        evaluate_2D_epochs (int): The interval at which to evaluate the model on 2D images.
+        evaluate_2D_epochs (Union[float, int]): The interval at which to evaluate the model on 2D images.
+            With [0,1] the model can be evaluated during an epoch.
         evaluate_3D_epochs (int): The interval at which to evaluate the model on 3D images.
         min_snr_loss (bool, optional): A flag indicating whether to use the minimum SNR loss. Defaults to False.
         snr_gamma (int, optional): The gamma value for the SNR loss. Defaults to 5.
@@ -73,7 +74,7 @@ class Training(ABC):
             logger: Logger,
             pipeline_factory: Callable[[Union[diffusers.UNet2DModel, pseudo3D.UNet2DModel], Union[DDIMScheduler, DDPMScheduler]], DiffusionPipeline], 
             num_epochs: int,
-            evaluate_2D_epochs: int,
+            evaluate_2D_epochs: Union[float, int],
             evaluate_3D_epochs: int,
             min_snr_loss: bool = False,
             snr_gamma = 5,
@@ -141,7 +142,7 @@ class Training(ABC):
         pipeline.to(self.accelerator.device) 
         
         # Evaluate 2D images
-        if self.epoch % self.evaluate_2D_epochs == 0 or self.epoch == self.num_epochs - 1: 
+        if self.epoch % self.evaluate_2D_epochs == 0 or self.epoch == self.num_epochs - 1 or self.evaluate_2D_epochs < 1: 
             if not self.deactivate_2D_evaluation:
                 self.evaluation2D.evaluate(
                     pipeline, 
@@ -158,6 +159,7 @@ class Training(ABC):
             and (
                 self.epoch % self.evaluate_3D_epochs == 0 
                 or self.epoch == self.num_epochs - 1
+                or self.evaluate_3D_epochs < 1
                 )
             ): 
             self.evaluation3D.evaluate(
@@ -172,7 +174,7 @@ class Training(ABC):
             self.progress_bar = tqdm(total=len(self.train_dataloader), disable=not self.accelerator.is_local_main_process) 
             self.progress_bar.set_description(f"Epoch {self.epoch}") 
             self.model.train() 
-            for batch in self.train_dataloader:
+            for idx, batch in enumerate(self.train_dataloader):
 
                 input, noise, timesteps = self.model_input_generator.get_model_input(batch)
                  
@@ -215,6 +217,9 @@ class Training(ABC):
 
 
                 self.global_step += 1 
+
+                if idx % int(self.evaluate_2D_epochs * len(self.train_dataloader)) == 0:
+                    self.evaluate()
 
                 if self.debug:
                     break
