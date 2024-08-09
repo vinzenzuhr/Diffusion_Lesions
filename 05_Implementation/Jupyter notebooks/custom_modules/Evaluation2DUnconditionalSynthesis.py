@@ -5,9 +5,9 @@ from torch.utils.data import DataLoader
 
 from custom_modules import Evaluation2D, EvaluationUtils, ModelInputGenerator, Logger
 
-class Evaluation2DSynthesis(Evaluation2D):
+class Evaluation2DUnconditionalSynthesis(Evaluation2D):
     """
-    Class for evaluating the performance of a diffusion pipeline in 2D specific for the use case 'lesion synthesis'.
+    Class for evaluating the performance of a diffusion pipeline in 2D specific for the use case 'unconditional lesion synthesis'.
 
     Args:
         intermediate_timestep (int): The intermediate timestep to start the diffusion process.

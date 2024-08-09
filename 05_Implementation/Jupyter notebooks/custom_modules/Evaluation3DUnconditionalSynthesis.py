@@ -9,9 +9,9 @@ from torch.utils.data import DataLoader
 
 from custom_modules import Evaluation3D,  EvaluationUtils , Logger
 
-class Evaluation3DSynthesis(Evaluation3D):
+class Evaluation3DUnconditionalSynthesis(Evaluation3D):
     """
-    Evaluation class for 3D synthesis.
+    Class for evaluating the performance of a diffusion pipeline with 3D images for the use case 'unconditional lesion synthesis'.
 
     Args:
         intermediate_timestep (int): The intermediate timestep to start the diffusion process.

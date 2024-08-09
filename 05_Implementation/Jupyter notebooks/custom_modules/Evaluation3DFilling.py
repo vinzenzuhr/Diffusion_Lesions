@@ -9,7 +9,8 @@ from custom_modules import Evaluation3D, Logger
 
 class Evaluation3DFilling(Evaluation3D):
     """
-    Class for evaluating the performance of a diffusion pipeline with 3D images for the use case 'lesion filling'. 
+    Class for evaluating the performance of a diffusion pipeline with 3D images for the use cases 
+    'conditional and unconditional lesion filling' and 'conditional lesion synthesis'. 
 
     Args:
         dataloader (DataLoader): DataLoader object for loading 3D evaluation data.

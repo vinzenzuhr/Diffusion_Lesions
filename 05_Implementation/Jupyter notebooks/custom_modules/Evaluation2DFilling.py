@@ -8,7 +8,8 @@ from custom_modules import Evaluation2D, ModelInputGenerator, Logger
 
 class Evaluation2DFilling(Evaluation2D):
     """
-    Class for evaluating the performance of a diffusion pipeline in 2D specific for the use case 'lesion filling'.
+    Class for evaluating the performance of a diffusion pipeline in 2D specific for the use cases 
+    'conditional and unconditional lesion filling' and 'conditional lesion synthesis'.
 
     Args:
         eval_dataloader (DataLoader): The data loader for evaluation data.

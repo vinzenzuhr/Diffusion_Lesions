@@ -20,13 +20,13 @@ from .Evaluation2D import Evaluation2D
 
 from .Evaluation2DFilling import Evaluation2DFilling
 
-from .Evaluation2DSynthesis import Evaluation2DSynthesis
+from .Evaluation2DUnconditionalSynthesis import Evaluation2DUnconditionalSynthesis
 
 from .Evaluation3D import Evaluation3D 
 
 from .Evaluation3DFilling import Evaluation3DFilling
 
-from .Evaluation3DSynthesis import Evaluation3DSynthesis
+from .Evaluation3DUnconditionalSynthesis import Evaluation3DUnconditionalSynthesis
 
 from .GuidedRePaintPipeline import GuidedRePaintPipeline
 
