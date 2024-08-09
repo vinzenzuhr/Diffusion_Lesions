@@ -1,16 +1,27 @@
+"""Calculation of the dice score between synthesized lesion segmentation and ground truth lesion segmentation.
+
+The results are logged to tensorboard.
+
+Args:
+    lesion_segm (str): Path to the synthesized lesion segmentation.
+    gt_lesion_segm (str): Path to the ground truth lesion segmentation.
+    wm_segm (str): Path to the white matter segmentation.
+    tensorboard_output_dir (str): Path to the output directory for tensorboard logging. Defaults to None.
+"""
+
 import sys
 from pathlib import Path
 import nibabel as nib
 import torch
 from torchmetrics import Dice
 from torch.utils.tensorboard import SummaryWriter
- 
+
 lesion_segm = list(Path(sys.argv[1]).rglob("*lesions2.nii.gz"))
 lesion_segm = dict(zip([x.parent.stem for x in lesion_segm],lesion_segm))
 gt_lesion_segm = list(Path(sys.argv[2]).rglob("*lesions2.nii.gz"))
-gt_lesion_segm = dict(zip([x.parent.stem for x in gt_lesion_segm],gt_lesion_segm))
+gt_lesion_segm = dict(zip([x.parent.stem for x in gt_lesion_segm], gt_lesion_segm))
 wm_segm = list(Path(sys.argv[3]).rglob("*.nii.gz"))
-wm_segm = dict(zip([x.parent.stem for x in wm_segm],wm_segm)) 
+wm_segm = dict(zip([x.parent.stem for x in wm_segm], wm_segm)) 
 tensorboard_output_dir = Path(sys.argv[4]) if len(sys.argv) > 4 else None
 
 # only keep segmentations which are in lesion_segm
@@ -26,7 +37,7 @@ for key in lesion_segm.keys():
     gt_lesion = torch.from_numpy(nib.load(gt_lesion_segm[key]).get_fdata()).to(torch.int)
     wm = torch.from_numpy(nib.load(wm_segm[key]).get_fdata()).to(torch.int)
     binary_wm = torch.logical_or(wm==41, wm==2)
-    gt_lesion = binary_wm * gt_lesion
+    #gt_lesion = binary_wm * gt_lesion
  
     lesions.append(lesion)
     gt_lesions.append(gt_lesion)
