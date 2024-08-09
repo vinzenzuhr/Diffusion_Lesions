@@ -46,7 +46,6 @@ class Evaluation2D(ABC):
         self.logger = logger
         self.accelerator = accelerator
         self.num_inference_steps = num_inference_steps 
-        self.best_ssim = 0
         self.model_input_generator = model_input_generator
         self.output_dir = output_dir
         self.eval_loss_timesteps = eval_loss_timesteps
@@ -54,6 +53,7 @@ class Evaluation2D(ABC):
         self.seed = seed
 
         self.lpips_metric = LearnedPerceptualImagePatchSimilarity(net_type='alex').to(self.accelerator.device)
+        self.best_ssim = -1
 
     def _calc_lpip(self, images_1: torch.Tensor, images_2: torch.Tensor) -> torch.Tensor:
         """
