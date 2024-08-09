@@ -38,6 +38,7 @@ class DatasetMRI2D(DatasetMRI):
         restrict_mask_to_wm (bool, optional): Whether to restrict the mask to white matter. Defaults to False.
         proportion_training_circular_masks (int, optional): The proportion of training circular masks. Defaults to 0.
         circle_mask_shape (Tuple[int, int], optional): The shape of the circular mask. Defaults to None.
+        uniform_mask_center (bool, optional): Whether to use the same center for a whole batch. Defaults to False.
         default_to_circular_mask (bool, optional): Whether to use a circular mask if a mask with no content is provided. 
             Defaults to False.
 
@@ -65,6 +66,7 @@ class DatasetMRI2D(DatasetMRI):
         restrict_mask_to_wm: bool = False,
         proportion_training_circular_masks: int = 0,
         circle_mask_shape: Tuple[int, int] = None,
+        uniform_mask_center: bool = False, 
         default_to_circular_mask: bool = False
         ):
         super().__init__(
@@ -83,6 +85,7 @@ class DatasetMRI2D(DatasetMRI):
         self.min_area = min_area
         self.proportionTrainingCircularMasks = proportion_training_circular_masks
         self.circleMaskShape = circle_mask_shape
+        self.uniform_mask_center = uniform_mask_center
         self.default_to_circular_mask = default_to_circular_mask
         
         if(root_dir_synthesis and not root_dir_masks):
@@ -172,7 +175,9 @@ class DatasetMRI2D(DatasetMRI):
             segm_slice = torch.empty(0)
         # get 2D circular mask or 2D slice vom 3D lesion mask
         if self.proportionTrainingCircularMasks > random.random():
-            mask_slice = self.get_random_circular_masks(n=self.sorted_slice_sample_size) 
+            mask_slice = self.get_random_circular_masks(n=self.sorted_slice_sample_size)
+            if self.sorted_slice_sample_size > 1:
+                mask_slice = mask_slice.unsqueeze(1) 
         elif mask != None:
             if self.connected_masks:
                 # create mask from random amount of connected components
@@ -262,8 +267,7 @@ class DatasetMRI2D(DatasetMRI):
         Returns:
             dict: A dictionary containing the relevant slices and other information.
         """
-        assert (restriction == "mask" and path_img) or (restriction == "segm" and path_segm)  
-
+        assert (restriction == "mask" and path_img) or (restriction == "segm" and path_segm) or restriction == "unrestricted" 
         output = dict()
         output["path_mask"] = None
         output["path_segm"] = None
@@ -334,7 +338,12 @@ class DatasetMRI2D(DatasetMRI):
         upper_bound_radius=50
         std_center=30.0
 
-        center=torch.normal(mean=torch.tensor(self.circleMaskShape).expand(n,2) / 2, std=std_center, generator=generator) 
+        if self.uniform_mask_center:
+            center=torch.normal(mean=torch.tensor(self.circleMaskShape) / 2, std=std_center, generator=generator) 
+            center=center.expand(n,2)
+        else:
+            center=torch.normal(mean=torch.tensor(self.circleMaskShape).expand(n,2) / 2, std=std_center, generator=generator)  
+
         radius=torch.rand(n, generator=generator)*(upper_bound_radius-lower_bound_radius) + lower_bound_radius
         
         # create matrix with euclidean distance to center

@@ -122,24 +122,39 @@ class DatasetMRI(Dataset):
 
         return binary_white_matter_segm
 
-    def dilate_mask(self, mask: torch.tensor, binary_segm: torch.tensor, num_pixels: int = 1) -> torch.tensor:
+    @staticmethod
+    def dilate_mask(mask: torch.tensor, binary_segm: torch.tensor = None, num_pixels: int = 1, 
+                    kernel_shape: str = "square") -> torch.tensor:
         """
         Dilates the input mask tensor wihtin the white matter area.
 
         Args:
             mask (torch.tensor): The input mask tensor.
-            binary_segm (torch.tensor): Binary mask of the white matter area
+            binary_segm (torch.tensor, optional): Binary mask of the white matter area
             num_pixels (int, optional): The number of pixels to dilate the mask by. Defaults to 1.
+            kernel (str, optional): The kernel shape for dilation. Can be "square" or "cross". Defaults to "square".
+
+        Raises:
+            ValueError: When the kernel shape is not recognized.
 
         Returns:
             torch.tensor: The dilated mask tensor.
         """
-
-        kernel = torch.ones((num_pixels*2+1,num_pixels*2+1, num_pixels*2+1)) 
+        if kernel_shape == "square":
+            kernel = torch.ones((num_pixels*2 + 1, num_pixels*2 + 1, num_pixels*2 + 1))  
+        elif kernel_shape == "cross":
+            kernel = torch.zeros((num_pixels*2 + 1, num_pixels*2 + 1, num_pixels*2 + 1))
+            kernel[num_pixels, num_pixels, :] = 1
+            kernel[num_pixels, :, num_pixels] = 1
+            kernel[:, num_pixels, num_pixels] = 1
+        else:
+            raise ValueError(f"Kernel shape {kernel_shape} not recognized. Use 'square' or 'cross'")
 
         dilated_mask = F.conv3d(mask.unsqueeze(0).unsqueeze(0), kernel.unsqueeze(0).unsqueeze(0), 
                                 padding='same'
-                                ) * binary_segm.unsqueeze(0).unsqueeze(0)
+                                ) 
+        if not binary_segm is None:
+            dilated_mask = dilated_mask * binary_segm.unsqueeze(0).unsqueeze(0)
         dilated_mask[dilated_mask>0]=1.
         
         #prevent shrinking of mask
@@ -266,7 +281,7 @@ class DatasetMRI(Dataset):
             synthesis_mask[synthesis_mask<0.01] = 0 
 
         if self.dilation > 0:
-            masks = self.dilate_mask(masks, self._get_binary_segm(segm), self.dilation)
+            masks = DatasetMRI.dilate_mask(masks, self._get_binary_segm(segm), self.dilation)
 
         # Normalize the image to [-1,1] following the DDPM paper 
         max_v = torch.max(img)
