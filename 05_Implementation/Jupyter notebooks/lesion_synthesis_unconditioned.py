@@ -181,7 +181,7 @@ if False:
     
     pipeline = DDIMGuidedPipeline.from_pretrained(config.output_dir) 
     
-    eval = Evaluation2DSynthesis(config, pipeline, None, None, Accelerator(), None)
+    eval = Evaluation2DUnconditionalSynthesis(config, pipeline, None, None, Accelerator(), None)
     images_with_lesions, _ = eval._add_coarse_lesions(datasetEvaluation[123]["gt_image"], datasetEvaluation[123])
     clean_image=datasetEvaluation[123]["gt_image"]
     synthesized_images = pipeline(images_with_lesions, 1).images
@@ -287,7 +287,7 @@ config.lr_scheduler = "cosine_schedule_with_warmup"
 # In[13]:
 
 
-from custom_modules import TrainingUnconditional, GuidedRePaintPipeline, Evaluation2DSynthesis, Evaluation3DSynthesis, DDIMGuidedPipeline
+from custom_modules import TrainingUnconditional, GuidedRePaintPipeline, Evaluation2DUnconditionalSynthesis, Evaluation3DUnconditionalSynthesis, DDIMGuidedPipeline
 from custom_modules import PipelineFactories
 
 config.conditional_data = "None"
@@ -301,8 +301,8 @@ args = {
     "datasetTrain": datasetTrain, 
     "datasetEvaluation": datasetEvaluation, 
     "dataset3DEvaluation": dataset3DEvaluation, 
-    "evaluation2D": Evaluation2DSynthesis,
-    "evaluation3D": Evaluation3DSynthesis, 
+    "evaluation2D": Evaluation2DUnconditionalSynthesis,
+    "evaluation3D": Evaluation3DUnconditionalSynthesis, 
     "pipelineFactory": PipelineFactories.get_ddim_guided_pipeline, 
     "deactivate3Devaluation": config.deactivate3Devaluation} 
 trainingSynthesis = TrainingUnconditional(**args)

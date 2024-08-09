@@ -191,7 +191,7 @@ config.lr_scheduler = "cosine_schedule_with_warmup"
 # In[8]:
 
 
-from custom_modules import TrainingUnconditional, GuidedRePaintPipeline, Evaluation2DSynthesis, Evaluation3DSynthesis 
+from custom_modules import TrainingUnconditional, GuidedRePaintPipeline, Evaluation2DUnconditionalSynthesis, Evaluation3DUnconditionalSynthesis 
 from custom_modules import PipelineFactories
 
 config.conditional_data = "None"
@@ -205,8 +205,8 @@ args = {
     "datasetTrain": datasetTrain, 
     "datasetEvaluation": datasetEvaluation, 
     "dataset3DEvaluation": dataset3DEvaluation, 
-    "evaluation2D": Evaluation2DSynthesis,
-    "evaluation3D": Evaluation3DSynthesis, 
+    "evaluation2D": Evaluation2DUnconditionalSynthesis,
+    "evaluation3D": Evaluation3DUnconditionalSynthesis, 
     "pipelineFactory": PipelineFactories.get_guided_repaint_pipeline, 
     "multi_sample": config.num_sorted_samples > 1,
     "deactivate3Devaluation": config.deactivate3Devaluation,

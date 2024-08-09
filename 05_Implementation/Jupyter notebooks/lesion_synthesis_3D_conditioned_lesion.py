@@ -1,15 +1,19 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+# ### Introduction
+# In this jupyter notebook we're synthesizing (adding) MS lesions. We're training a unet model with pseudo3D resnet blocks, which conditions on a binary mask and the voided image. For training it uses binary lesions masks annotated by doctors.
+
+# ### Configuration
+
 # In[1]:
 
 
-#create config
 from dataclasses import dataclass
 
 @dataclass
 class Config: 
-    mode = "train" # ['train', 'eval']
+    mode = "eval" # ['train', 'eval']
     debug = False
     output_dir = "lesion-synthesis-3D-filling-cond-lesion"
 
@@ -17,12 +21,12 @@ class Config:
     dataset_train_path = "./datasets/synthesis/dataset_train/imgs"
     segm_train_path = "./datasets/synthesis/dataset_train/segm"
     masks_train_path = "./datasets/synthesis/dataset_train/masks"
-    dataset_eval_path = "./datasets/synthesis/dataset_eval/imgs"
-    segm_eval_path = "./datasets/synthesis/dataset_eval/segm"
-    masks_eval_path = "./datasets/synthesis/dataset_eval/masks" 
+    dataset_eval_path = "./datasets_test/synthesis/unhealthy_tysabri_flair/imgs"
+    #segm_eval_path = "./datasets/synthesis/dataset_eval/segm"
+    masks_eval_path = "./datasets_test/synthesis/unhealthy_tysabri_flair/task_solution_masks" 
     target_shape = None # During preprocessing the img gets transformered to this shape (computationally expensive) 
     unet_img_shape = (160,256) # This defines the input layer of the model
-    channels = 1 # Number of channels of input layer of the model (1 for grayscale and 3 for RGB)
+    channels = 3 # The number of input channels: 1 for grayscale img, 1 for img_voided, 1 for mask
     restrict_train_slices = "mask" # Defines which 2D slices are used from the 3D MRI ['mask', 'segm', or 'unrestricted']
     restrict_eval_slices = "mask" # Defines which 2D slices are used from the 3D MRI ['mask', 'segm', or 'unrestricted']
     restrict_mask_to_wm = False # Restricts lesion masks to white matter based on segmentation
@@ -33,17 +37,17 @@ class Config:
     num_dataloader_workers = 8 # how many subprocesses to use for data loading
 
     # train config 
-    num_epochs = 5000
+    num_epochs = 2000
     sorted_slice_sample_size = 1 # The number of sorted slices within one sample. Defaults to 1.
                                  # This is needed for the pseudo3Dmodels, where the model expects that the slices within one batch
                                  # are next to each other in the 3D volume.
     train_batch_size = 1
-    effective_train_batch_size = 16 # The train_batch_size gets recalculated to this batch size based on accumulation_steps and number of GPU's.
+    effective_train_batch_size = 6 # The train_batch_size gets recalculated to this batch size based on accumulation_steps and number of GPU's.
 	                              # For pseudo3D models the sorted_slice_sample_size gets calculcated to this batch size. 
                                   # The train_batch_size and eval_batch_size should be 1.
     eval_batch_size = 1 
     learning_rate = 1e-4
-    lr_warmup_steps = 500
+    lr_warmup_steps = 100
     use_min_snr_loss = False
     snr_gamma = 5
     gradient_accumulation_steps = 1
@@ -51,7 +55,7 @@ class Config:
 
     # evaluation config
     num_inference_steps = 50
-    evaluate_2D_epochs = 80 # The interval at which to evaluate the model on 2D images. 
+    evaluate_2D_epochs = 50 # The interval at which to evaluate the model on 2D images. 
     evaluate_3D_epochs = 1000 # The interval at which to evaluate the model on 3D images. 
     evaluate_num_batches = 30 # Number of batches used for evaluation. -1 means all batches. 
     evaluate_num_batches_3d = 2 # Number of batches used for evaluation. -1 means all batches. 
@@ -59,7 +63,7 @@ class Config:
     deactivate_2D_evaluation = False
     deactivate_3D_evaluation = True
     img3D_filename = "Flair" # Filename to save the processed 3D images 
-    eval_loss_timesteps = [20,140,260,380,560,680,800,920] # List of timesteps to evalute validation loss.
+    eval_loss_timesteps = [20,140,260] # List of timesteps to evalute validation loss.
     eval_mask_dilation = 0 # dilation value for masks
     #add_lesion_technique = "other_lesions_99Quantile" # Used for synthesis only. 
                                                       # ['empty', 'mean_intensity', 'other_lesions_1stQuantile', 'other_lesions_mean', 
@@ -76,7 +80,6 @@ config = Config()
 # In[2]:
 
 
-#setup huggingface accelerate
 import torch
 import numpy as np
 import accelerate
@@ -124,49 +127,70 @@ if config.debug:
 print(f"Start training with batch size {config.sorted_slice_sample_size}, {config.gradient_accumulation_steps} accumulation steps and {config.num_processes} process(es)")
 
 
+# ### Datasets
+
 # In[7]:
 
 
 from custom_modules import DatasetMRI2D, DatasetMRI3D, ScaleDecorator
 from pathlib import Path
 from torchvision import transforms 
-
-#add augmentation
+ 
 transformations = None
 if config.brightness_augmentation:
     transformations = transforms.RandomApply([ScaleDecorator(transforms.ColorJitter(brightness=1))], p=0.5)
 
-#create dataset
-dataset_train = DatasetMRI2D(root_dir_img=Path(config.dataset_train_path), restriction=config.restrict_train_slices, root_dir_masks=Path(config.masks_train_path), connected_masks=config.train_connected_masks, target_shape=config.target_shape, transforms=transformations, sorted_slice_sample_size=config.sorted_slice_sample_size, restrict_mask_to_wm=config.restrict_mask_to_wm, proportion_training_circular_masks=config.proportion_training_circular_masks)
-dataset_evaluation = DatasetMRI2D(root_dir_img=Path(config.dataset_eval_path), restriction=config.restrict_eval_slices, root_dir_masks=Path(config.masks_eval_path), target_shape=config.target_shape, sorted_slice_sample_size=config.sorted_slice_sample_size, dilation=config.eval_mask_dilation)
-dataset_3D_evaluation = DatasetMRI3D(root_dir_img=Path(config.dataset_eval_path), root_dir_masks=Path(config.masks_eval_path), target_shape=config.target_shape, dilation=config.eval_mask_dilation)
+dataset_train = DatasetMRI2D(
+    root_dir_img=Path(config.dataset_train_path), 
+    root_dir_masks=Path(config.masks_train_path), 
+    restriction=config.restrict_train_slices,
+    proportion_training_circular_masks=config.proportion_training_circular_masks,
+    connected_masks=config.train_connected_masks, 
+    restrict_mask_to_wm=config.restrict_mask_to_wm, 
+    transforms=transformations,
+    sorted_slice_sample_size=config.sorted_slice_sample_size, 
+    target_shape=config.target_shape, 
+)
+dataset_evaluation = DatasetMRI2D(
+    root_dir_img=Path(config.dataset_eval_path), 
+    root_dir_masks=Path(config.masks_eval_path), 
+    restriction=config.restrict_eval_slices, 
+    dilation=config.eval_mask_dilation,
+    sorted_slice_sample_size=config.sorted_slice_sample_size, 
+    target_shape=config.target_shape,
+)
+dataset_3D_evaluation = DatasetMRI3D(
+    root_dir_img=Path(config.dataset_eval_path), 
+    root_dir_masks=Path(config.masks_eval_path), 
+    dilation=config.eval_mask_dilation,
+    target_shape=config.target_shape, 
+)
 
 
-# ### Prepare Training
+# ### Training environement
 
 # In[8]:
 
 
-#create model
 from custom_modules import UNet2DModel
 
 model = UNet2DModel(
-    sample_size=config.unet_img_shape,  # the target image resolution
-    in_channels=3,  # the number of input channels, 3 for RGB images
-    out_channels=config.channels,  # the number of output channels
+    sample_size=config.unet_img_shape,   
+    in_channels=config.channels,  
+    out_channels=1,  
     layers_per_block=2,  # how many ResNet layers to use per UNet block
     block_out_channels=(128, 128, 256, 256, 512, 512),  # the number of output channels for each UNet block
     down_block_types=(
-        "Pseudo3DDownBlock2D",  # a regular ResNet downsampling block
+        "Pseudo3DDownBlock2D",   
         "Pseudo3DDownBlock2D",
         "Pseudo3DDownBlock2D",
         "Pseudo3DDownBlock2D",
-        "Pseudo3DAttnDownBlock2D",  # a ResNet downsampling block with spatial self-attention
+        "Pseudo3DAttnDownBlock2D",   
         "Pseudo3DAttnDownBlock2D",
     ),
     up_block_types=(
-        "Pseudo3DAttnUpBlock2D",  # a regular ResNet upsampling block
-        "Pseudo3DAttnUpBlock2D",  # a ResNet upsampling block with spatial self-attention
+        "Pseudo3DAttnUpBlock2D",   
+        "Pseudo3DAttnUpBlock2D",  
         "Pseudo3DUpBlock2D",
         "Pseudo3DUpBlock2D",
         "Pseudo3DUpBlock2D",
@@ -180,32 +204,27 @@ config.model = "BigPseudo3DUNet2DModel"
 # In[9]:
 
 
-#setup noise scheduler
 import torch
 from PIL import Image
 from diffusers import DDIMScheduler
 
+#setup noise scheduler
 noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
-#sample_image = datasetTrain[0]['gt_image'].unsqueeze(0)
-#noise = torch.randn(sample_image.shape)
-#timesteps = torch.LongTensor([50])
-#noisy_image = noise_scheduler.add_noise(sample_image, noise, timesteps)
-
 config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
 
 
 # In[10]:
 
 
-# setup lr scheduler
 from diffusers.optimization import get_cosine_schedule_with_warmup
 import math
 
+# setup lr scheduler
 optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
 lr_scheduler = get_cosine_schedule_with_warmup(
     optimizer=optimizer,
     num_warmup_steps=config.lr_warmup_steps,
-    num_training_steps=(math.ceil(len(dataset_train)/config.train_batch_size) * config.num_epochs), # num_iterations per epoch * num_epochs
+    num_training_steps=(math.ceil(len(dataset_train)/config.train_batch_size) * config.num_epochs), 
 )
 
 config.lr_scheduler = "cosine_schedule_with_warmup"
@@ -216,6 +235,7 @@ config.lr_scheduler = "cosine_schedule_with_warmup"
 
 from accelerate import Accelerator 
 
+# setup accelerator for distributed training
 accelerator = Accelerator(
     mixed_precision=config.mixed_precision,
     gradient_accumulation_steps=config.gradient_accumulation_steps,  
@@ -227,6 +247,7 @@ accelerator = Accelerator(
 
 from torch.utils.tensorboard import SummaryWriter
 import os
+from custom_modules import Logger
 
 if accelerator.is_main_process:
     if config.output_dir is not None:
@@ -234,31 +255,47 @@ if accelerator.is_main_process:
     #setup tensorboard
     tb_summary = SummaryWriter(config.output_dir, purge_step=0)
     accelerator.init_trackers("train_example") #maybe delete
+    logger = Logger(tb_summary, config.log_csv)
+    logger.log_config(config)
 
 
 # In[13]:
 
 
-if accelerator.is_main_process:
-    from custom_modules import Logger
-    logger = Logger(tb_summary, config.log_csv)
-    logger.log_config(config)
+from custom_modules import get_dataloader
+
+train_dataloader = get_dataloader(
+    dataset=dataset_train, 
+    batch_size=config.train_batch_size, 
+    num_workers=config.num_dataloader_workers, 
+    random_sampler=True, 
+    seed=config.seed, 
+    multi_slice=config.sorted_slice_sample_size > 1
+)
+d2_eval_dataloader = get_dataloader(
+    dataset=dataset_evaluation, 
+    batch_size=config.eval_batch_size, 
+    num_workers=config.num_dataloader_workers, 
+    random_sampler=False, 
+    seed=config.seed,
+    multi_slice=config.sorted_slice_sample_size > 1
+)
+d3_eval_dataloader = get_dataloader(
+    dataset=dataset_3D_evaluation, 
+    batch_size=1, 
+    num_workers=config.num_dataloader_workers,
+    random_sampler=False, 
+    seed=config.seed, 
+    multi_slice=False
+) 
 
 
 # In[14]:
 
 
-from custom_modules import get_dataloader
-
-train_dataloader = get_dataloader(dataset=dataset_train, batch_size = config.train_batch_size, 
-                                  num_workers=config.num_dataloader_workers, random_sampler=True, 
-                                  seed=config.seed, multi_slice=config.sorted_slice_sample_size > 1)
-d2_eval_dataloader = get_dataloader(dataset=dataset_evaluation, batch_size = config.eval_batch_size, 
-                                    num_workers=config.num_dataloader_workers, random_sampler=False, 
-                                    seed=config.seed, multi_slice=config.sorted_slice_sample_size > 1)
-d3_eval_dataloader = get_dataloader(dataset=dataset_3D_evaluation, batch_size = 1, 
-                                    num_workers=config.num_dataloader_workers, random_sampler=False, 
-                                    seed=config.seed, multi_slice=False) 
+model, optimizer, train_dataloader, d2_eval_dataloader, d3_eval_dataloader, lr_scheduler = accelerator.prepare(
+    model, optimizer, train_dataloader, d2_eval_dataloader, d3_eval_dataloader, lr_scheduler
+)
 
 
 # In[15]:
@@ -295,6 +332,8 @@ args = {
 }
 evaluation3D = Evaluation3DFilling(**args)
 
+
+# ### Start training
 
 # In[16]:
 

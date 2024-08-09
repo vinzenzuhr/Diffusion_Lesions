@@ -2,7 +2,7 @@
 # coding: utf-8
 
 # ### Introduction
-# In this jupyter notebook we're filling (removing) MS lesions. We're training an unconditional unet model with pseudo3D resnet blocks and then use the repaint pipeline to use the unconditional model for the inpainting task.
+# In this jupyter notebook we're filling (removing) MS lesions. We're training a unet model with pseudo3D resnet blocks which conditions on a binary mask and the voided image. For training it uses lesions masks annotated by doctors.
 
 # ### Configuration
 
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 class Config: 
     mode = "train" # ['train', 'eval']
     debug = False
-    output_dir = "lesion-filling-3D-repaint" 
+    output_dir = "lesion-filling-3D-conditioned-lesions" 
 
     #dataset config
     dataset_train_path = "./datasets/filling/dataset_train/imgs"
@@ -26,18 +26,18 @@ class Config:
     masks_eval_path = "./datasets/filling/dataset_eval/masks"  
     target_shape = None # During preprocessing the img gets transformered to this shape (computationally expensive) 
     unet_img_shape = (256,256) # This defines the input layer of the model
-    channels = 1 # the number of input channels: 1 for grayscale img
-    restrict_train_slices = "segm" # Defines which 2D slices are used from the 3D MRI ['mask', 'segm', or 'unrestricted']
+    channels = 3 # the number of input channels: 1 for grayscale img
+    restrict_train_slices = "mask" # Defines which 2D slices are used from the 3D MRI ['mask', 'segm', or 'unrestricted']
     restrict_eval_slices = "mask" # Defines which 2D slices are used from the 3D MRI ['mask', 'segm', or 'unrestricted']
-    #restrict_mask_to_wm = False # Restricts lesion masks to white matter based on segmentation
-    #proportion_training_circular_masks = 0 # Defines if random circular masks should be used instead of the provided lesion masks. 
+    restrict_mask_to_wm = True # Restricts lesion masks to white matter based on segmentation
+    proportion_training_circular_masks = 0.0 # Defines if random circular masks should be used instead of the provided lesion masks. 
                                              # 1 is 100% random circular masks and 0 is 100% lesion masks.
-    #train_connected_masks = False # The distribution of the masks is extended by splitting the masks into several smaller connected components.  	
-    brightness_augmentation = False	# The training data gets augmented with randomly applied ColorJitter. 
+    train_connected_masks = True # The distribution of the masks is extended by splitting the masks into several smaller connected components.  	
+    brightness_augmentation = True	# The training data gets augmented with randomly applied ColorJitter. 
     num_dataloader_workers = 8 # how many subprocesses to use for data loading
 
     # train config 
-    num_epochs = 150 
+    num_epochs = 12 
     sorted_slice_sample_size = None # The number of sorted slices within one sample. Defaults to 1.
                                     # This is needed for the pseudo3Dmodels, where the model expects that the slices within one batch
                                     # are next to each other in the 3D volume.
@@ -48,30 +48,30 @@ class Config:
     eval_batch_size = 1 
     learning_rate = 1e-4
     lr_warmup_steps = 500
-    use_min_snr_loss = True
+    use_min_snr_loss = False
     snr_gamma = 5 
     gradient_accumulation_steps = 1
     mixed_precision = "fp16" # `no` for float32, `fp16` for automatic mixed precision 
 
     # evaluation config
     num_inference_steps=50 
-    evaluate_2D_epochs = 3 # The interval at which to evaluate the model on 2D images. 
+    evaluate_2D_epochs = 0.3 # The interval at which to evaluate the model on 2D images. 
     evaluate_3D_epochs = 1000 # The interval at which to evaluate the model on 3D images.  
-    evaluate_num_batches = 4 # Number of batches used for evaluation. -1 means all batches. 
+    evaluate_num_batches = 15 # Number of batches used for evaluation. -1 means all batches. 
     evaluate_num_batches_3d = -1 # Number of batches used for evaluation. -1 means all batches.   
-    evaluate_unconditional_img = True # Used for unconditional models to generate some samples without the repaint pipeline. 
+    evaluate_unconditional_img = False # Used for unconditional models to generate some samples without the repaint pipeline. 
     deactivate_2D_evaluation = False
     deactivate_3D_evaluation = True
     img3D_filename = "T1" # Filename to save the processed 3D images 
     eval_loss_timesteps = [20,80,140,200,260,320,380,440,560,620,680,740,800,860,920,980] # List of timesteps to evalute validation loss.
-    eval_mask_dilation = 1 # dilation value for masks
+    eval_mask_dilation = 0 # dilation value for masks
 	#add_lesion_technique = "other_lesions_99Quantile" # Used for synthesis only. 
                                                       # ['empty', 'mean_intensity', 'other_lesions_1stQuantile', 'other_lesions_mean', 
                                                       # 'other_lesions_median', 'other_lesions_3rdQuantile', 'other_lesions_99Quantile'] 
     #intermediate_timestep = 3 # Used for synthesis only. Diffusion process starts from this timesteps. 
                                # Num_inference_steps means the whole pipeline and 1 the last step. 
-    jump_length = 8 # Used for unconditional lesion filling only. Defines the jump_length from the repaint paper.
-    jump_n_sample = 10 # Used for unconditional lesion filling only. Defines the jump_n_sample from the repaint paper.
+    #jump_length = 8 # Used for unconditional lesion filling only. Defines the jump_length from the repaint paper.
+    #jump_n_sample = 10 # Used for unconditional lesion filling only. Defines the jump_n_sample from the repaint paper.
     log_csv = False # saves evaluation metrics as csv 
     seed = 0 # used for dataloader sampling and generation of the initial noise to start the diffusion process
 config = Config()
@@ -129,7 +129,7 @@ print(f"Start training with batch size {config.sorted_slice_sample_size}, {confi
 
 # ### Datasets
 
-# In[ ]:
+# In[7]:
 
 
 from custom_modules import DatasetMRI2D, DatasetMRI3D, ScaleDecorator
@@ -141,17 +141,20 @@ if config.brightness_augmentation:
     transformations = transforms.RandomApply([ScaleDecorator(transforms.ColorJitter(brightness=1))], p=0.5)
  
 dataset_train = DatasetMRI2D(
-    root_dir_img=Path(config.dataset_train_path), 
+    root_dir_img=Path(config.dataset_train_path),
+    root_dir_masks=Path(config.masks_train_path), 
     root_dir_segm=Path(config.segm_train_path), 
     restriction=config.restrict_train_slices,   
+    proportion_training_circular_masks=config.proportion_training_circular_masks, 
+    connected_masks=config.train_connected_masks, 
+    restrict_mask_to_wm=config.restrict_mask_to_wm, 
     transforms=transformations, 
     sorted_slice_sample_size=config.sorted_slice_sample_size, 
     target_shape =config.target_shape, 
 )
 dataset_evaluation = DatasetMRI2D(
     root_dir_img=Path(config.dataset_eval_path), 
-    root_dir_masks=Path(config.masks_eval_path), 
-    root_dir_segm=Path(config.segm_eval_path), 
+    root_dir_masks=Path(config.masks_eval_path),  
     restriction=config.restrict_eval_slices, 
     dilation=config.eval_mask_dilation, 
     sorted_slice_sample_size=config.sorted_slice_sample_size, 
@@ -159,8 +162,7 @@ dataset_evaluation = DatasetMRI2D(
 )
 dataset_3D_evaluation = DatasetMRI3D(
     root_dir_img=Path(config.dataset_eval_path), 
-    root_dir_masks=Path(config.masks_eval_path), 
-    root_dir_segm=Path(config.segm_eval_path), 
+    root_dir_masks=Path(config.masks_eval_path),  
     dilation=config.eval_mask_dilation, 
     target_shape =config.target_shape, 
 )
@@ -168,7 +170,7 @@ dataset_3D_evaluation = DatasetMRI3D(
 
 # ### Training environement
 
-# In[ ]:
+# In[8]:
 
 
 from custom_modules import UNet2DModel
@@ -200,7 +202,7 @@ model = UNet2DModel(
 config.model = "Pseudo3DUNet2DModel"
 
 
-# In[ ]:
+# In[9]:
 
 
 import torch
@@ -212,7 +214,7 @@ noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
 config.noise_scheduler = "DDIMScheduler(num_train_timesteps=1000)"
 
 
-# In[ ]:
+# In[10]:
 
 
 from diffusers.optimization import get_cosine_schedule_with_warmup
@@ -228,7 +230,7 @@ lr_scheduler = get_cosine_schedule_with_warmup(
 config.lr_scheduler = "cosine_schedule_with_warmup"
 
 
-# In[ ]:
+# In[11]:
 
 
 from accelerate import Accelerator 
@@ -240,7 +242,7 @@ accelerator = Accelerator(
 )
 
 
-# In[ ]:
+# In[12]:
 
 
 from torch.utils.tensorboard import SummaryWriter
@@ -257,7 +259,7 @@ if accelerator.is_main_process:
     logger.log_config(config)
 
 
-# In[ ]:
+# In[13]:
 
 
 from custom_modules import get_dataloader
@@ -288,7 +290,7 @@ d3_eval_dataloader = get_dataloader(
 ) 
 
 
-# In[ ]:
+# In[14]:
 
 
 model, optimizer, train_dataloader, d2_eval_dataloader, d3_eval_dataloader, lr_scheduler = accelerator.prepare(
@@ -296,12 +298,12 @@ model, optimizer, train_dataloader, d2_eval_dataloader, d3_eval_dataloader, lr_s
 )
 
 
-# In[ ]:
+# In[15]:
 
 
 from custom_modules import ModelInputGenerator, Evaluation2DFilling, Evaluation3DFilling 
 
-model_input_generator = ModelInputGenerator(conditional=False, noise_scheduler=noise_scheduler)
+model_input_generator = ModelInputGenerator(conditional=True, noise_scheduler=noise_scheduler)
 
 args = {
     "eval_dataloader": d2_eval_dataloader, 
@@ -354,7 +356,7 @@ args = {
     "evaluation2D": evaluation2D,
     "evaluation3D": evaluation3D,
     "logger": None if not accelerator.is_main_process else logger,
-    "pipeline_factory": PipelineFactories.get_repaint_pipeline,
+    "pipeline_factory": PipelineFactories.get_ddim_inpaint_pipeline,
     "num_epochs": config.num_epochs, 
     "evaluate_2D_epochs": config.evaluate_2D_epochs,
     "evaluate_3D_epochs": config.evaluate_3D_epochs,
@@ -363,10 +365,7 @@ args = {
     "evaluate_unconditional_img": config.evaluate_unconditional_img,
     "deactivate_2D_evaluation": config.deactivate_2D_evaluation, 
     "deactivate_3D_evaluation": config.deactivate_3D_evaluation, 
-    "evaluation_pipeline_parameters": {
-        "jump_length": config.jump_length,
-        "jump_n_sample": config.jump_n_sample,
-    },
+    "evaluation_pipeline_parameters": {},
     "debug": config.debug, 
     }
 
