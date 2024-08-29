@@ -40,7 +40,6 @@ from diffusers.utils.torch_utils import apply_freeu
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
-
 class PseudoConv3d(nn.Module):
     def __init__(
         self, dim=None, kernel_size=3, **kwargs

@@ -297,7 +297,8 @@ class DatasetMRI2D(DatasetMRI):
         # Skip the last sorted_slice_sample_size slices. They will be added in the __getitem__ function
         list_relevant_slices = list()
         list_relevant_components = list()
-        for idx_slice in torch.arange(img.shape[1] - self.sorted_slice_sample_size + 1):
+        img_shape = self.target_shape[1] if self.target_shape else img.shape[1]
+        for idx_slice in torch.arange(img_shape - self.sorted_slice_sample_size + 1):
             # If there is no content and it's not in the middle of a package, then skip it
             if restriction == "mask" and not mask[:, idx_slice, :].any():
                 continue

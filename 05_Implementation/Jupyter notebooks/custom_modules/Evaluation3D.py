@@ -107,7 +107,8 @@ class Evaluation3D(ABC):
                     num_iterations += 1
 
                 # postprocess and save image as nifti file
-                final_3d_images = DatasetMRI.postprocess(final_3d_images.squeeze(), *proc_info, self.dataloader.dataset.get_metadata(int(idx)))
+                final_3d_images = DatasetMRI.postprocess(final_3d_images.squeeze(), *proc_info, 
+                                                         self.dataloader.dataset.get_metadata(int(idx)))
                 save_dir = os.path.join(self.output_dir, f"samples_3D/{name}")
                 os.makedirs(save_dir, exist_ok=True)
                 self._save_image(final_3d_images, save_dir, self.filename)

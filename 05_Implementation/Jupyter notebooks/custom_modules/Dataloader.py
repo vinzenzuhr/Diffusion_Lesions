@@ -158,7 +158,7 @@ def get_dataloader(
         batch_size (int): The batch size for each iteration.
         num_workers (int, optional): The number of worker threads to use for data loading. 
             Defaults to 8.
-        random_sampler (bool, optional): Whether to use a random sampler for the dataset. 
+        random_sampler (bool, optional): Whether to seed the random sampler for the dataset. 
             Defaults to False.
         seed (int, optional): The seed value for the random sampler. Defaults to 0.
         multi_slice (bool, optional): A boolean indicating whether the dataset contains
