@@ -21,3 +21,8 @@ for file in files:
     os.makedirs(output_dir / file.parent.name, exist_ok=True)
     ants.core.ants_image_io.image_write(kk["thickness_image"], os.path.abspath(output_dir / file.parent.name / "thickness_image.nii.gz"))
     ants.core.ants_image_io.image_write(kk["segmentation_image"], os.path.abspath(output_dir / file.parent.name / "segmentation_image.nii.gz"))
+
+
+
+
+
