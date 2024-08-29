@@ -8,12 +8,14 @@ library(lattice)
 ##
 # load datasets
 setwd("C:/Users/vinze/OneDrive - Universitaet Bern/Master Studium/Master_Thesis/Diffusion_Lesions/05_Implementation/Statistical evaluation")
-filled_corth_th_file_path <- "csv/dl+direct/lesion_filled/result-thick.csv"
-not_filled_corth_th_file_path <- "csv/dl+direct/lesion_not_filled/result-thick.csv"
+#filled_corth_th_file_path <- "csv/dl+direct/lesion_filled/result-thick.csv"
+#not_filled_corth_th_file_path <- "csv/dl+direct/lesion_not_filled/result-thick.csv"
 #filled_corth_th_file_path <- "csv/ants_deep_learning/lesion_filled/result-thick.csv"
 #not_filled_corth_th_file_path <- "csv/ants_deep_learning/lesion_not_filled/result-thick.csv"
 #filled_corth_th_file_path <- "csv/ants_old/lesion_filled/result-thick.csv"
 #not_filled_corth_th_file_path <- "csv/ants_old/lesion_not_filled/result-thick.csv"
+#filled_corth_th_file_path <- "csv/freesurfer/lesion_filled/result-thick.csv"
+#not_filled_corth_th_file_path <- "csv/freesurfer/lesion_not_filled/result-thick.csv"
 filled_corth_th_data <- read.csv(filled_corth_th_file_path)
 not_filled_corth_th_data <- read.csv(not_filled_corth_th_file_path)
 
@@ -34,11 +36,22 @@ while ( TRUE ) {
     break
   }
   line_elements <- unlist(strsplit(gsub("-", ".",  line, fixed=TRUE), ", "))  
-  cortical_roi[line_elements[1]] <- line_elements[-1]
-  juxtacortical_patients <- append(juxtacortical_patients, line_elements[-1])   
+  patients <- line_elements[-1]
+  
+  # remove # for freesurfer csv 
+  #for (i in 1:(length(patients))) { 
+  #  patients[i] <- strsplit(patients[i], split="_")[[1]][1] 
+  #  if (substr(patients[i], 2, 2) == '0'){
+  #    patients[i] <- paste("p", substr(patients[i], 3, 4), sep="") 
+  #  }
+  #} 
+  
+  cortical_roi[line_elements[1]] <- patients 
+  juxtacortical_patients <- append(juxtacortical_patients, patients)   
 }
 close(con) 
-juxtacortical_patients <- unique(juxtacortical_patients) 
+juxtacortical_patients <- unique(juxtacortical_patients)  
+
 
 # Check for normal distribution
 x_meanRhTh <- not_filled_corth_th_data$rh.MeanThickness 
@@ -62,7 +75,7 @@ mean_xy <- (x_meanLhTh + y_meanLhTh) / 2
 changes <- (abs(x_meanLhTh - mean_xy) + abs(y_meanLhTh - mean_xy)) / (2*mean_xy)
 lh_changes <- 100 * sum(changes) / length(changes)
 global_absolute_changes_relative_to_the_mean = (rh_changes + lh_changes) / 2 
-global_absolute_changes_relative_to_the_mean
+global_absolute_changes_relative_to_the_mean 
 
 # Absolute changes relative to the mean without juxacortical lesion patients
 x=not_filled_corth_th_data %>% filter(!(SUBJECT %in% juxtacortical_patients))
