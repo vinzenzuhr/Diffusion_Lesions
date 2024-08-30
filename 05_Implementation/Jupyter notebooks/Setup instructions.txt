@@ -1,0 +1,7 @@
+- Use Docker Container: pytorch/pytorch:2.1.2-cuda11.8-cudnn8-runtime
+- Install via pip:
+pip install tensorboard
+pip install numpy torch blobfile tqdm pyYaml pillow diffusers["torch"] transformers nibabel
+pip install accelerate torcheval-nightly torchmetrics einops 
+- Start training with command:
+accelerate launch lesion_filling_3D_unconditioned.py
