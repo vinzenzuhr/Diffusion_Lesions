@@ -16,6 +16,8 @@ setwd("C:/Users/vinze/OneDrive - Universitaet Bern/Master Studium/Master_Thesis/
 #not_filled_corth_th_file_path <- "csv/ants_old/lesion_not_filled/result-thick.csv"
 #filled_corth_th_file_path <- "csv/freesurfer/lesion_filled/result-thick.csv"
 #not_filled_corth_th_file_path <- "csv/freesurfer/lesion_not_filled/result-thick.csv"
+filled_corth_th_file_path <- "csv/fastsurfer/lesion_filled/result-thick.csv"
+not_filled_corth_th_file_path <- "csv/fastsurfer/lesion_not_filled/result-thick.csv"
 filled_corth_th_data <- read.csv(filled_corth_th_file_path)
 not_filled_corth_th_data <- read.csv(not_filled_corth_th_file_path)
 
