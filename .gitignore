@@ -1,16 +1,16 @@
 .ipynb_checkpoints/
 *.safetensors 
 *.nii.gz
-05_Implementation/Jupyter notebooks/segmentation_models
-05_Implementation/Jupyter notebooks/test_notebook.ipynb
+05_Implementation/code/segmentation_models
+05_Implementation/code/test_notebook.ipynb
 04_Datasets
-05_Implementation/Jupyter notebooks/lesion-filling-256*
-05_Implementation/Jupyter notebooks/lesion-synthesis-256*
-05_Implementation/Jupyter notebooks/lesion-synthesis-3D*
-05_Implementation/Jupyter notebooks/lesion-filling-3D*
+05_Implementation/code/lesion-filling-256*
+05_Implementation/code/lesion-synthesis-256*
+05_Implementation/code/lesion-synthesis-3D*
+05_Implementation/code/lesion-filling-3D*
 *.npy
 __pycache__/
 06_Trainings/
 03_Literatur/**/*.docx
-08_Report
-09_Presentation
+08_Report/z_documents
+09_Presentation/SCAN meeting
